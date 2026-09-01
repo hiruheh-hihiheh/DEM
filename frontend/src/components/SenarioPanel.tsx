@@ -1,4 +1,5 @@
 import React from 'react'
+import type { DamFeature } from '../types/dam'
 
 export interface ScenarioState {
   river: string
@@ -20,6 +21,7 @@ interface ScenarioPanelProps {
   }[]
   isLoadingDams: boolean
   damLoadError: string | null
+  selectedDamData: DamFeature | null
 }
 
 export const ScenarioPanel: React.FC<ScenarioPanelProps> = ({
@@ -31,6 +33,7 @@ export const ScenarioPanel: React.FC<ScenarioPanelProps> = ({
   damsList,
   isLoadingDams,
   damLoadError,
+  selectedDamData,
 }) => {
   return (
     <div className="scenario-panel">
@@ -130,6 +133,60 @@ export const ScenarioPanel: React.FC<ScenarioPanelProps> = ({
           </span>
         </div>
       </div>
+
+      {selectedDamData && (
+        <div className="selected-dam">
+          <div className="selected-dam__header">
+            <span className="selected-dam__eyebrow">
+              Selected Dam
+            </span>
+
+            <span className="selected-dam__status">
+              Active
+            </span>
+          </div>
+
+          <h3 className="selected-dam__name">
+            {selectedDamData.properties.name ??
+              'Unnamed Dam'}
+          </h3>
+
+          <div className="selected-dam__grid">
+            <div>
+              <span>River</span>
+              <strong>
+                {selectedDamData.properties.river ??
+                  'N/A'}
+              </strong>
+            </div>
+
+            <div>
+              <span>State</span>
+              <strong>
+                {selectedDamData.properties.state ??
+                  'N/A'}
+              </strong>
+            </div>
+
+            <div>
+              <span>Height</span>
+              <strong>
+                {selectedDamData.properties.height ??
+                  '—'}{' '}
+                m
+              </strong>
+            </div>
+
+            <div>
+              <span>Year</span>
+              <strong>
+                {selectedDamData.properties
+                  .completion_year ?? '—'}
+              </strong>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="scenario-section">
         <h2 className="scenario-section__title">
