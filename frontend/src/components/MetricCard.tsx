@@ -6,6 +6,7 @@ interface MetricCardProps {
   unit: string
   description?: string
   status?: 'normal' | 'warning' | 'critical'
+  icon?: React.ReactNode
 }
 
 export const MetricCard: React.FC<
@@ -16,12 +17,19 @@ export const MetricCard: React.FC<
   unit,
   description,
   status = 'normal',
+  icon,
 }) => {
   return (
     <article
       className={`metric-card metric-card--${status}`}
     >
       <div className="metric-card__header">
+        {icon && (
+          <div className="metric-card__icon">
+            {icon}
+          </div>
+        )}
+
         <span className="metric-card__label">
           {label}
         </span>

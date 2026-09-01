@@ -12,8 +12,8 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="app-header__branding">
         <div className="app-header__title">
           <svg
-            width="24"
-            height="24"
+            width="22"
+            height="22"
             viewBox="0 0 24 24"
             fill="none"
             xmlns="http://www.w3.org/2000/svg"
@@ -42,11 +42,11 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </svg>
 
-          <span>Flood-Twin</span>
+          <span>HydroTwin</span>
         </div>
 
         <span className="app-header__subtitle">
-          Hydrological Simulation &amp; Disaster Management
+          Dam Break Simulation &amp; Flood Analysis
         </span>
       </div>
 

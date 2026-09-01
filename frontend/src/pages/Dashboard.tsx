@@ -10,12 +10,44 @@ import {
   type ScenarioState,
 } from '../components/SenarioPanel'
 import { FloodMap } from '../map/FloodMap'
-import { MapToolbar } from '../components/MapToolbar'
+import { MapToolbar } from '../components/MapToolBar'
 import { MetricCard } from '../components/MetricCard'
 import { StatusBadge } from '../components/StatusBadge'
 import { fetchDams } from '../services/api'
 
 import type { DamGeoJSON } from '../types/dam'
+
+/* ---- Inline SVG icons for metric cards ---- */
+const IconFloodArea = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 12C2 12 5 8 8 8C11 8 13 12 16 12C19 12 22 8 22 8" />
+    <path d="M2 17C2 17 5 13 8 13C11 13 13 17 16 17C19 17 22 13 22 13" />
+  </svg>
+)
+
+const IconDepth = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 2V22" />
+    <path d="M8 6L12 2L16 6" />
+    <path d="M8 18L12 22L16 18" />
+    <line x1="4" y1="12" x2="20" y2="12" />
+  </svg>
+)
+
+const IconVelocity = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+  </svg>
+)
+
+const IconPopulation = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M23 21v-2a4 4 0 00-3-3.87" />
+    <path d="M16 3.13a4 4 0 010 7.75" />
+  </svg>
+)
 
 export const Dashboard: React.FC = () => {
   const [scenario, setScenario] =
@@ -216,6 +248,7 @@ export const Dashboard: React.FC = () => {
 
       <footer className="app-metrics">
         <MetricCard
+          icon={IconFloodArea}
           label="Flood Area"
           value="--"
           unit="km²"
@@ -223,6 +256,7 @@ export const Dashboard: React.FC = () => {
         />
 
         <MetricCard
+          icon={IconDepth}
           label="Maximum Depth"
           value="--"
           unit="m"
@@ -230,6 +264,7 @@ export const Dashboard: React.FC = () => {
         />
 
         <MetricCard
+          icon={IconVelocity}
           label="Maximum Velocity"
           value="--"
           unit="m/s"
@@ -237,6 +272,7 @@ export const Dashboard: React.FC = () => {
         />
 
         <MetricCard
+          icon={IconPopulation}
           label="Population Exposed"
           value="--"
           unit="people"
