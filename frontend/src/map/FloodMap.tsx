@@ -17,7 +17,7 @@ function FloodMap() {
       container: mapContainer.current,
       style: 'https://demotiles.maplibre.org/style.json',
       center: [78.9629, 20.5937],
-      zoom: 4.5,
+      zoom: 4,
     })
 
     map.addControl(
@@ -25,12 +25,24 @@ function FloodMap() {
       'top-right',
     )
 
-    const handleLoad = async () => {
+    map.on('load', async () => {
       try {
+        console.log('Map loaded')
+
         const response =
           await api.get<DamFeatureCollection>('/api/dams')
 
         const damData = response.data
+
+        console.log(
+          'Dam count:',
+          damData.features.length,
+        )
+
+        console.log(
+          'First dam:',
+          damData.features[0],
+        )
 
         map.addSource('dams', {
           type: 'geojson',
@@ -42,12 +54,23 @@ function FloodMap() {
           type: 'circle',
           source: 'dams',
           paint: {
-            'circle-radius': 4,
-            'circle-opacity': 0.9,
-            'circle-stroke-width': 1,
+            'circle-radius': 7,
+            'circle-color': '#ff1f1f',
+            'circle-stroke-width': 2,
             'circle-stroke-color': '#ffffff',
+            'circle-opacity': 1,
           },
         })
+
+        console.log(
+          'Dam source:',
+          map.getSource('dams'),
+        )
+
+        console.log(
+          'Dam layer exists:',
+          map.getLayer('dam-points'),
+        )
 
         map.on('click', 'dam-points', (event) => {
           const feature = event.features?.[0]
@@ -58,63 +81,43 @@ function FloodMap() {
 
           const properties = feature.properties
 
-          const name = properties?.name ?? 'Unknown Dam'
-          const river = properties?.river ?? 'Unknown River'
-          const state = properties?.state ?? 'Unknown State'
-          const district = properties?.district ?? 'Unknown District'
-          const height = properties?.height ?? '—'
-          const purpose = properties?.purpose ?? '—'
-          const year = properties?.completion_year ?? '—'
-
           new maplibregl.Popup({
             maxWidth: '320px',
           })
             .setLngLat(event.lngLat)
             .setHTML(`
-              <div style="font-family: system-ui; line-height: 1.4;">
+              <div style="
+                font-family: system-ui, sans-serif;
+                line-height: 1.5;
+              ">
                 <h3 style="margin: 0 0 10px;">
-                  ${name}
+                  ${properties?.name ?? 'Unknown Dam'}
                 </h3>
 
                 <div>
-                  <strong>River:</strong> ${river}
+                  <strong>River:</strong>
+                  ${properties?.river ?? 'Unknown'}
                 </div>
 
                 <div>
-                  <strong>State:</strong> ${state}
+                  <strong>State:</strong>
+                  ${properties?.state ?? 'Unknown'}
                 </div>
 
                 <div>
-                  <strong>District:</strong> ${district}
+                  <strong>District:</strong>
+                  ${properties?.district ?? 'Unknown'}
                 </div>
 
                 <div>
-                  <strong>Height:</strong> ${height} m
+                  <strong>Height:</strong>
+                  ${properties?.height ?? '—'} m
                 </div>
 
                 <div>
-                  <strong>Completion:</strong> ${year}
+                  <strong>Purpose:</strong>
+                  ${properties?.purpose ?? '—'}
                 </div>
-
-                <div>
-                  <strong>Purpose:</strong> ${purpose}
-                </div>
-
-                <button
-                  id="select-dam"
-                  style="
-                    margin-top: 12px;
-                    width: 100%;
-                    padding: 8px;
-                    border: 0;
-                    border-radius: 6px;
-                    background: #111;
-                    color: white;
-                    cursor: pointer;
-                  "
-                >
-                  Select Dam
-                </button>
               </div>
             `)
             .addTo(map)
@@ -128,12 +131,11 @@ function FloodMap() {
           map.getCanvas().style.cursor = ''
         })
       } catch (error) {
-        console.error('Failed to load dam dataset:', error)
+        console.error(
+          'Failed to load dams:',
+          error,
+        )
       }
-    }
-
-    map.once('load', () => {
-      void handleLoad()
     })
 
     return () => {
@@ -141,7 +143,12 @@ function FloodMap() {
     }
   }, [])
 
-  return <div ref={mapContainer} className="flood-map" />
+  return (
+    <div
+      ref={mapContainer}
+      className="flood-map"
+    />
+  )
 }
 
 export default FloodMap
