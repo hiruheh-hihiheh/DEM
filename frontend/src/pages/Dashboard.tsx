@@ -120,7 +120,7 @@ export const Dashboard: React.FC = () => {
       )
   }, [damsData, scenario.river])
 
-    const selectedDam = useMemo(() => {
+  const selectedDam = useMemo(() => {
     if (!damsData || !scenario.dam) {
       return null
     }
