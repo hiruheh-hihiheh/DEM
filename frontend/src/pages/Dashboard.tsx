@@ -1,4 +1,5 @@
 import FloodMap from '../map/FloodMap'
+
 function Dashboard() {
   return (
     <main className="dashboard">
@@ -49,13 +50,20 @@ function Dashboard() {
               <option value="normal">Normal release</option>
               <option value="partial">Partial breach</option>
               <option value="full">Full breach</option>
-              <option value="extreme">Extreme rainfall + breach</option>
+              <option value="extreme">
+                Extreme rainfall + breach
+              </option>
             </select>
           </label>
 
           <label>
             Reservoir Level
-            <input type="range" min="0" max="100" defaultValue="75" />
+            <input
+              type="range"
+              min="0"
+              max="100"
+              defaultValue="75"
+            />
             <span className="range-value">75%</span>
           </label>
 
@@ -64,9 +72,10 @@ function Dashboard() {
           </button>
         </aside>
 
-<section className="map-panel">
-  <FloodMap />
-</section>
+        <section className="map-panel">
+          <FloodMap />
+        </section>
+      </section>
 
       <section className="metrics">
         <article>
