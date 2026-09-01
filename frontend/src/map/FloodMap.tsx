@@ -1,154 +1,316 @@
-import { useEffect, useRef } from 'react'
+import React, {
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 import * as maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-import api from '../services/api'
-import type { DamFeatureCollection } from '../types/dam'
+import type { DamGeoJSON } from '../types/dam'
 
-function FloodMap() {
-  const mapContainer = useRef<HTMLDivElement | null>(null)
+interface FloodMapProps {
+  damsData: DamGeoJSON | null
+  selectedDam?: string
+  onDamSelect?: (damId: string) => void
+}
+
+export const FloodMap: React.FC<FloodMapProps> = ({
+  damsData,
+  selectedDam,
+  onDamSelect,
+}) => {
+  const mapContainer =
+    useRef<HTMLDivElement | null>(null)
+
+  const map =
+    useRef<maplibregl.Map | null>(null)
+
+  const [isLoading, setIsLoading] =
+    useState(true)
+
+  const [error, setError] =
+    useState<string | null>(null)
 
   useEffect(() => {
-    if (!mapContainer.current) {
+    if (!mapContainer.current || map.current) {
       return
     }
 
-    const map = new maplibregl.Map({
+    const mapInstance = new maplibregl.Map({
       container: mapContainer.current,
-      style: 'https://demotiles.maplibre.org/style.json',
-      center: [78.9629, 20.5937],
+      style:
+        'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+      center: [78.9629, 22.5937],
       zoom: 4,
+      attributionControl: false,
     })
 
-    map.addControl(
-      new maplibregl.NavigationControl(),
+    map.current = mapInstance
+
+    mapInstance.addControl(
+      new maplibregl.NavigationControl({
+        showCompass: true,
+      }),
       'top-right',
     )
 
-    map.on('load', async () => {
-      try {
-        console.log('Map loaded')
+    mapInstance.addControl(
+      new maplibregl.AttributionControl({
+        compact: true,
+      }),
+      'bottom-right',
+    )
 
-        const response =
-          await api.get<DamFeatureCollection>('/api/dams')
-
-        const damData = response.data
-
-        console.log(
-          'Dam count:',
-          damData.features.length,
-        )
-
-        console.log(
-          'First dam:',
-          damData.features[0],
-        )
-
-        map.addSource('dams', {
-          type: 'geojson',
-          data: damData,
-        })
-
-        map.addLayer({
-          id: 'dam-points',
-          type: 'circle',
-          source: 'dams',
-          paint: {
-            'circle-radius': 7,
-            'circle-color': '#ff1f1f',
-            'circle-stroke-width': 2,
-            'circle-stroke-color': '#ffffff',
-            'circle-opacity': 1,
-          },
-        })
-
-        console.log(
-          'Dam source:',
-          map.getSource('dams'),
-        )
-
-        console.log(
-          'Dam layer exists:',
-          map.getLayer('dam-points'),
-        )
-
-        map.on('click', 'dam-points', (event) => {
-          const feature = event.features?.[0]
-
-          if (!feature) {
-            return
-          }
-
-          const properties = feature.properties
-
-          new maplibregl.Popup({
-            maxWidth: '320px',
-          })
-            .setLngLat(event.lngLat)
-            .setHTML(`
-              <div style="
-                font-family: system-ui, sans-serif;
-                line-height: 1.5;
-              ">
-                <h3 style="margin: 0 0 10px;">
-                  ${properties?.name ?? 'Unknown Dam'}
-                </h3>
-
-                <div>
-                  <strong>River:</strong>
-                  ${properties?.river ?? 'Unknown'}
-                </div>
-
-                <div>
-                  <strong>State:</strong>
-                  ${properties?.state ?? 'Unknown'}
-                </div>
-
-                <div>
-                  <strong>District:</strong>
-                  ${properties?.district ?? 'Unknown'}
-                </div>
-
-                <div>
-                  <strong>Height:</strong>
-                  ${properties?.height ?? '—'} m
-                </div>
-
-                <div>
-                  <strong>Purpose:</strong>
-                  ${properties?.purpose ?? '—'}
-                </div>
-              </div>
-            `)
-            .addTo(map)
-        })
-
-        map.on('mouseenter', 'dam-points', () => {
-          map.getCanvas().style.cursor = 'pointer'
-        })
-
-        map.on('mouseleave', 'dam-points', () => {
-          map.getCanvas().style.cursor = ''
-        })
-      } catch (error) {
-        console.error(
-          'Failed to load dams:',
-          error,
-        )
-      }
+    mapInstance.on('load', () => {
+      setIsLoading(false)
     })
 
     return () => {
-      map.remove()
+      mapInstance.remove()
+      map.current = null
     }
   }, [])
 
+  useEffect(() => {
+    const mapInstance = map.current
+
+    if (!mapInstance || !damsData) {
+      return
+    }
+
+    const addDamLayer = () => {
+      if (mapInstance.getSource('dams')) {
+        return
+      }
+
+      try {
+        mapInstance.addSource('dams', {
+          type: 'geojson',
+          data: damsData,
+        })
+
+        mapInstance.addLayer({
+          id: 'dams-layer',
+          type: 'circle',
+          source: 'dams',
+          paint: {
+            'circle-radius': [
+              'case',
+              ['==', ['get', 'isSelected'], true],
+              10,
+              5,
+            ],
+            'circle-color': [
+              'case',
+              ['==', ['get', 'isSelected'], true],
+              '#f59e0b',
+              '#3b82f6',
+            ],
+            'circle-stroke-width': 1.5,
+            'circle-stroke-color': '#ffffff',
+            'circle-opacity': 0.9,
+          },
+        })
+
+        mapInstance.on(
+          'mouseenter',
+          'dams-layer',
+          () => {
+            mapInstance.getCanvas().style.cursor =
+              'pointer'
+          },
+        )
+
+        mapInstance.on(
+          'mouseleave',
+          'dams-layer',
+          () => {
+            mapInstance.getCanvas().style.cursor =
+              ''
+          },
+        )
+
+        mapInstance.on(
+          'click',
+          'dams-layer',
+          (event) => {
+            const feature =
+              event.features?.[0]
+
+            if (!feature) {
+              return
+            }
+
+            const properties =
+              feature.properties
+
+            const damId =
+              properties?.pic
+
+            if (
+              damId &&
+              onDamSelect
+            ) {
+              onDamSelect(String(damId))
+            }
+
+            new maplibregl.Popup({
+              closeButton: true,
+              closeOnClick: false,
+              className: 'dam-popup',
+            })
+              .setLngLat(event.lngLat)
+              .setHTML(`
+                <div class="popup-content">
+                  <h3>
+                    ${
+                      properties?.name ??
+                      'Unknown Dam'
+                    }
+                  </h3>
+
+                  <p>
+                    <strong>River:</strong>
+                    ${
+                      properties?.river ??
+                      'N/A'
+                    }
+                  </p>
+
+                  <p>
+                    <strong>State:</strong>
+                    ${
+                      properties?.state ??
+                      'N/A'
+                    }
+                  </p>
+
+                  <p>
+                    <strong>District:</strong>
+                    ${
+                      properties?.district ??
+                      'N/A'
+                    }
+                  </p>
+
+                  <p>
+                    <strong>Height:</strong>
+                    ${
+                      properties?.height ??
+                      '—'
+                    } m
+                  </p>
+
+                  <p>
+                    <strong>Purpose:</strong>
+                    ${
+                      properties?.purpose ??
+                      'N/A'
+                    }
+                  </p>
+                </div>
+              `)
+              .addTo(mapInstance)
+          },
+        )
+      } catch (err) {
+        console.error(
+          'Failed to add dam layer:',
+          err,
+        )
+
+        setError(
+          'Failed to display dam geospatial data.',
+        )
+      }
+    }
+
+    if (mapInstance.isStyleLoaded()) {
+      addDamLayer()
+    } else {
+      mapInstance.once('load', addDamLayer)
+    }
+  }, [damsData, onDamSelect])
+
+  useEffect(() => {
+    const mapInstance = map.current
+
+    if (!mapInstance || !damsData) {
+      return
+    }
+
+    const source = mapInstance.getSource(
+      'dams',
+    ) as maplibregl.GeoJSONSource | undefined
+
+    if (!source) {
+      return
+    }
+
+    const features = damsData.features.map(
+      (feature) => ({
+        ...feature,
+        properties: {
+          ...feature.properties,
+          isSelected:
+            feature.properties.pic ===
+            selectedDam,
+        },
+      }),
+    )
+
+    source.setData({
+      type: 'FeatureCollection',
+      features,
+    })
+
+    if (!selectedDam) {
+      mapInstance.flyTo({
+        center: [78.9629, 22.5937],
+        zoom: 4,
+        duration: 1000,
+      })
+
+      return
+    }
+
+    const selectedFeature =
+      damsData.features.find(
+        (feature) =>
+          feature.properties.pic ===
+          selectedDam,
+      )
+
+    if (!selectedFeature) {
+      return
+    }
+
+    mapInstance.flyTo({
+      center:
+        selectedFeature.geometry.coordinates,
+      zoom: 9,
+      duration: 1200,
+    })
+  }, [selectedDam, damsData])
+
   return (
-    <div
-      ref={mapContainer}
-      className="flood-map"
-    />
+    <div className="flood-map-container">
+      {isLoading && (
+        <div className="map-overlay-loading">
+          Loading Geospatial Data...
+        </div>
+      )}
+
+      {error && (
+        <div className="map-overlay-error">
+          {error}
+        </div>
+      )}
+
+      <div
+        ref={mapContainer}
+        className="maplibre-map"
+      />
+    </div>
   )
 }
-
-export default FloodMap

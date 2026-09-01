@@ -1,109 +1,248 @@
-import FloodMap from '../map/FloodMap'
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+} from 'react'
 
-function Dashboard() {
+import { Header } from '../components/Header'
+import {
+  ScenarioPanel,
+  type ScenarioState,
+} from '../components/SenarioPanel'
+import { FloodMap } from '../map/FloodMap'
+import { MapToolbar } from '../components/MapToolbar'
+import { MetricCard } from '../components/MetricCard'
+import { StatusBadge } from '../components/StatusBadge'
+import { fetchDams } from '../services/api'
+
+import type { DamGeoJSON } from '../types/dam'
+
+export const Dashboard: React.FC = () => {
+  const [scenario, setScenario] =
+    useState<ScenarioState>({
+      river: '',
+      dam: '',
+      scenario: 'normal',
+      reservoirLevel: 75,
+    })
+
+  const [damsData, setDamsData] =
+    useState<DamGeoJSON | null>(null)
+
+  const [isLoadingDams, setIsLoadingDams] =
+    useState(true)
+
+  const [damLoadError, setDamLoadError] =
+    useState<string | null>(null)
+
+  const [isSimulating, setIsSimulating] =
+    useState(false)
+
+  const [simulationComplete, setSimulationComplete] =
+    useState(false)
+
+  useEffect(() => {
+    const loadDams = async () => {
+      try {
+        setIsLoadingDams(true)
+        setDamLoadError(null)
+
+        const data = await fetchDams()
+
+        setDamsData(data)
+      } catch (error) {
+        console.error(
+          'Failed to load dams:',
+          error,
+        )
+
+        setDamLoadError(
+          'Failed to connect to backend API.',
+        )
+      } finally {
+        setIsLoadingDams(false)
+      }
+    }
+
+    void loadDams()
+  }, [])
+
+  const riversList = useMemo(() => {
+    if (!damsData) {
+      return []
+    }
+
+    const rivers = new Set(
+      damsData.features
+        .map(
+          (feature) =>
+            feature.properties.river,
+        )
+        .filter(
+          (
+            river,
+          ): river is string =>
+            Boolean(river),
+        ),
+    )
+
+    return Array.from(rivers).sort()
+  }, [damsData])
+
+  const filteredDams = useMemo(() => {
+    if (!damsData) {
+      return []
+    }
+
+    return damsData.features
+      .filter(
+        (feature) =>
+          !scenario.river ||
+          feature.properties.river ===
+            scenario.river,
+      )
+      .filter(
+        (feature) =>
+          Boolean(feature.properties.name),
+      )
+      .map((feature) => ({
+        id:
+          feature.properties.pic ??
+          feature.id,
+        name:
+          feature.properties.name ??
+          'Unnamed Dam',
+        river:
+          feature.properties.river,
+      }))
+      .sort((a, b) =>
+        a.name.localeCompare(b.name),
+      )
+  }, [damsData, scenario.river])
+
+  const handleScenarioChange = (
+    updates: Partial<ScenarioState>,
+  ) => {
+    setScenario((previous) => ({
+      ...previous,
+      ...updates,
+    }))
+
+    setSimulationComplete(false)
+  }
+
+  const handleDamSelect = (
+    damId: string,
+  ) => {
+    setScenario((previous) => ({
+      ...previous,
+      dam: damId,
+    }))
+
+    setSimulationComplete(false)
+  }
+
+  const handleRunSimulation = () => {
+    if (!scenario.dam) {
+      return
+    }
+
+    setIsSimulating(true)
+    setSimulationComplete(false)
+
+    setTimeout(() => {
+      setIsSimulating(false)
+      setSimulationComplete(true)
+    }, 2000)
+  }
+
+  const systemStatus =
+    isSimulating
+      ? 'simulation'
+      : simulationComplete
+        ? 'live'
+        : 'idle'
+
+  const statusText =
+    isSimulating
+      ? 'Running Simulation'
+      : simulationComplete
+        ? 'Simulation Complete'
+        : 'System Ready'
+
   return (
-    <main className="dashboard">
-      <header className="dashboard-header">
-        <div>
-          <p className="eyebrow">DISASTER MANAGEMENT SYSTEM</p>
-          <h1>Flood-Twin</h1>
-          <p className="subtitle">
-            Dam-break and flash-flood simulation platform
-          </p>
-        </div>
+    <div className="app-shell">
+      <Header
+        status={
+          <StatusBadge
+            status={systemStatus}
+            text={statusText}
+          />
+        }
+      />
 
-        <div className="system-status">
-          <span className="status-dot" />
-          System Operational
-        </div>
-      </header>
-
-      <section className="dashboard-grid">
-        <aside className="scenario-panel">
-          <h2>Scenario</h2>
-
-          <label>
-            River
-            <select defaultValue="">
-              <option value="" disabled>
-                Select river
-              </option>
-              <option>Rishi Ganga</option>
-              <option>Alaknanda</option>
-              <option>Kosi</option>
-            </select>
-          </label>
-
-          <label>
-            Dam / Reservoir
-            <select defaultValue="">
-              <option value="" disabled>
-                Select dam
-              </option>
-              <option>Demo Dam</option>
-            </select>
-          </label>
-
-          <label>
-            Failure Scenario
-            <select defaultValue="full">
-              <option value="normal">Normal release</option>
-              <option value="partial">Partial breach</option>
-              <option value="full">Full breach</option>
-              <option value="extreme">
-                Extreme rainfall + breach
-              </option>
-            </select>
-          </label>
-
-          <label>
-            Reservoir Level
-            <input
-              type="range"
-              min="0"
-              max="100"
-              defaultValue="75"
-            />
-            <span className="range-value">75%</span>
-          </label>
-
-          <button type="button" className="simulate-button">
-            Run Simulation
-          </button>
+      <main className="app-main">
+        <aside className="app-sidebar">
+          <ScenarioPanel
+            state={scenario}
+            onChange={handleScenarioChange}
+            onRunSimulation={
+              handleRunSimulation
+            }
+            isSimulating={isSimulating}
+            riversList={riversList}
+            damsList={filteredDams}
+            isLoadingDams={
+              isLoadingDams
+            }
+            damLoadError={
+              damLoadError
+            }
+          />
         </aside>
 
-        <section className="map-panel">
-          <FloodMap />
+        <section className="app-content">
+          <MapToolbar />
+
+          <FloodMap
+            damsData={damsData}
+            selectedDam={scenario.dam}
+            onDamSelect={
+              handleDamSelect
+            }
+          />
         </section>
-      </section>
+      </main>
 
-      <section className="metrics">
-        <article>
-          <span>Flood Area</span>
-          <strong>—</strong>
-          <small>km²</small>
-        </article>
+      <footer className="app-metrics">
+        <MetricCard
+          label="Flood Area"
+          value="--"
+          unit="km²"
+          description="Awaiting simulation"
+        />
 
-        <article>
-          <span>Maximum Depth</span>
-          <strong>—</strong>
-          <small>m</small>
-        </article>
+        <MetricCard
+          label="Maximum Depth"
+          value="--"
+          unit="m"
+          description="Awaiting simulation"
+        />
 
-        <article>
-          <span>Maximum Velocity</span>
-          <strong>—</strong>
-          <small>m/s</small>
-        </article>
+        <MetricCard
+          label="Maximum Velocity"
+          value="--"
+          unit="m/s"
+          description="Awaiting simulation"
+        />
 
-        <article>
-          <span>Population Exposed</span>
-          <strong>—</strong>
-          <small>people</small>
-        </article>
-      </section>
-    </main>
+        <MetricCard
+          label="Population Exposed"
+          value="--"
+          unit="people"
+          description="Awaiting simulation"
+        />
+      </footer>
+    </div>
   )
 }
-
-export default Dashboard
