@@ -28,7 +28,7 @@ export interface DamFeature {
   }
 }
 
-export interface DamFeatureCollection {
+export interface DamGeoJSON {
   type: 'FeatureCollection'
   features: DamFeature[]
 }
