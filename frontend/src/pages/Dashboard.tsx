@@ -4,6 +4,14 @@ import React, {
   useState,
 } from 'react'
 
+import {
+  DamDigitalTwin,
+} from '../components/dam/DamDigitalTwin'
+
+import {
+  buildDamDigitalTwin,
+} from '../utils/damDigitalTwin'
+
 import { Header } from '../components/Header'
 import {
   ScenarioPanel,
@@ -134,6 +142,14 @@ export const Dashboard: React.FC = () => {
     )
   }, [damsData, scenario.dam])
 
+  const selectedDamTwin = useMemo(() => {
+  if (!selectedDam) {
+    return null
+  }
+
+  return buildDamDigitalTwin(selectedDam)
+}, [selectedDam])
+
   const handleScenarioChange = (
     updates: Partial<ScenarioState>,
   ) => {
@@ -220,6 +236,39 @@ export const Dashboard: React.FC = () => {
               handleDamSelect
             }
           />
+          {selectedDamTwin && (
+  <section className="digital-twin-panel">
+    <div className="digital-twin-panel__header">
+      <div>
+        <span className="digital-twin-panel__eyebrow">
+          Digital Twin
+        </span>
+
+        <h2 className="digital-twin-panel__title">
+          {selectedDamTwin.identity.name ??
+            'Selected Dam'}
+        </h2>
+      </div>
+
+      <button
+        type="button"
+        className="digital-twin-panel__close"
+        onClick={() =>
+          setScenario((previous) => ({
+            ...previous,
+            dam: '',
+          }))
+        }
+      >
+        Close
+      </button>
+    </div>
+
+    <DamDigitalTwin
+      data={selectedDamTwin}
+    />
+  </section>
+)}
         </section>
       </main>
 
