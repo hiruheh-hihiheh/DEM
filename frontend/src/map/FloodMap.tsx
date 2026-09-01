@@ -130,89 +130,83 @@ export const FloodMap: React.FC<FloodMapProps> = ({
           },
         )
 
-        mapInstance.on(
-          'click',
-          'dams-layer',
-          (event) => {
-            const feature =
-              event.features?.[0]
+ mapInstance.on(
+  'click',
+  'dams-layer',
+  (event) => {
+    const feature =
+      event.features?.[0]
 
-            if (!feature) {
-              return
-            }
+    if (!feature) {
+      return
+    }
 
-            const properties =
-              feature.properties
+    const properties =
+      feature.properties
 
-            const damId =
-              properties?.pic
+    const damId =
+      properties?.pic
 
-            if (
-              damId &&
-              onDamSelect
-            ) {
-              onDamSelect(String(damId))
-            }
+    const popup =
+      new maplibregl.Popup({
+        closeButton: true,
+        closeOnClick: false,
+        className: 'dam-popup',
+      })
 
-            new maplibregl.Popup({
-              closeButton: true,
-              closeOnClick: false,
-              className: 'dam-popup',
-            })
-              .setLngLat(event.lngLat)
-              .setHTML(`
-                <div class="popup-content">
-                  <h3>
-                    ${
-                      properties?.name ??
-                      'Unknown Dam'
-                    }
-                  </h3>
+    popup
+      .setLngLat(event.lngLat)
+      .setHTML(`
+        <div class="popup-content">
+          <h3>
+            ${properties?.name ?? 'Unknown Dam'}
+          </h3>
 
-                  <p>
-                    <strong>River:</strong>
-                    ${
-                      properties?.river ??
-                      'N/A'
-                    }
-                  </p>
+          <p>
+            <strong>River:</strong>
+            ${properties?.river ?? 'N/A'}
+          </p>
 
-                  <p>
-                    <strong>State:</strong>
-                    ${
-                      properties?.state ??
-                      'N/A'
-                    }
-                  </p>
+          <p>
+            <strong>State:</strong>
+            ${properties?.state ?? 'N/A'}
+          </p>
 
-                  <p>
-                    <strong>District:</strong>
-                    ${
-                      properties?.district ??
-                      'N/A'
-                    }
-                  </p>
+          <button
+            type="button"
+            class="popup-more-info"
+            data-dam-id="${damId ?? ''}"
+          >
+            More Info
+          </button>
+        </div>
+      `)
+      .addTo(mapInstance)
 
-                  <p>
-                    <strong>Height:</strong>
-                    ${
-                      properties?.height ??
-                      '—'
-                    } m
-                  </p>
+    popup.once('open', () => {
+      const button =
+        document.querySelector(
+          '.popup-more-info',
+        ) as HTMLButtonElement | null
 
-                  <p>
-                    <strong>Purpose:</strong>
-                    ${
-                      properties?.purpose ??
-                      'N/A'
-                    }
-                  </p>
-                </div>
-              `)
-              .addTo(mapInstance)
-          },
-        )
+      if (!button || !damId) {
+        return
+      }
+
+      button.addEventListener(
+        'click',
+        () => {
+          onDamSelect?.(
+            String(damId),
+          )
+
+          popup.remove()
+        },
+      )
+    })
+  },
+)
+  
       } catch (err) {
         console.error(
           'Failed to add dam layer:',
