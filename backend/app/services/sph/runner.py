@@ -103,15 +103,15 @@ class SPHRunner:
                 f"See log: {log_path}"
             )
 
-        generated_case_xml = (
+        generated_case = (
             output_dir
-            / f"{case_name}.xml"
+            / case_name
         )
 
         solver_command = [
             str(self.solver),
             "-gpu",
-            str(generated_case_xml),
+            str(generated_case),
             str(output_dir),
         ]
 
