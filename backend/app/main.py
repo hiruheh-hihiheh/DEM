@@ -2,11 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.dams import router as dams_router
+from app.api.simulations import router as simulations_router
 
 
 app = FastAPI(
     title="DEM Twin API",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 
@@ -22,6 +23,7 @@ app.add_middleware(
 
 
 app.include_router(dams_router)
+app.include_router(simulations_router)
 
 
 @app.get("/")
