@@ -39,6 +39,7 @@ class SPHRunner:
         xml_path: Path,
         runs_dir: Path,
     ) -> dict:
+
         self.validate()
 
         simulation_id = str(uuid4())[:8]
@@ -63,51 +64,60 @@ class SPHRunner:
             encoding="utf-8",
         )
 
-        output_base = (
+        output_dir = (
             run_dir
             / f"{case_name}_out"
         )
 
+        # GenCase expects the definition file
+        # without the .xml extension.
+        definition_base = generated_xml.with_suffix("")
+
         gencase_command = [
             str(self.gencase),
-            str(generated_xml),
-            str(output_base),
+            str(definition_base),
+            str(output_dir / case_name),
             "-save:all",
         ]
 
         gencase_result = subprocess.run(
             gencase_command,
-            cwd=str(
-                xml_path.parent
-            ),
+            cwd=str(run_dir),
             capture_output=True,
             text=True,
             check=False,
         )
 
         if gencase_result.returncode != 0:
-            raise RuntimeError(
-                "GenCase failed.\n"
-                + gencase_result.stdout
+            log_path = run_dir / "gencase.log"
+
+            log_path.write_text(
+                gencase_result.stdout
                 + "\n"
-                + gencase_result.stderr
+                + gencase_result.stderr,
+                encoding="utf-8",
             )
+
+            raise RuntimeError(
+                "GenCase failed. "
+                f"See log: {log_path}"
+            )
+
+        generated_case_xml = (
+            output_dir
+            / f"{case_name}.xml"
+        )
 
         solver_command = [
             str(self.solver),
             "-gpu",
-            str(
-                output_base
-                / f"{case_name}.xml"
-            ),
-            str(output_base),
+            str(generated_case_xml),
+            str(output_dir),
         ]
 
         solver_result = subprocess.run(
             solver_command,
-            cwd=str(
-                xml_path.parent
-            ),
+            cwd=str(output_dir),
             capture_output=True,
             text=True,
             check=False,
@@ -130,8 +140,6 @@ class SPHRunner:
 
         return {
             "simulation_id": simulation_id,
-            "output_directory": str(
-                output_base
-            ),
+            "output_directory": str(output_dir),
             "log_file": str(log_path),
         }

@@ -230,9 +230,7 @@ def generate_xml(
                 key="DtAllParticles"
                 value="0" />
 
-            <parameter
-                key="DtAllParticles"
-                value="0" />
+
 
             <parameter
                 key="TimeMax"
