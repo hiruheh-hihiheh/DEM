@@ -41,15 +41,15 @@ def run_sph_simulation(
         )
 
     try:
-     dam = get_dam_by_id(request.dam_id)
+        dam = get_dam_by_id(request.dam_id)
     except KeyError:
-     raise HTTPException(
-        status_code=404,
-        detail=f"Dam not found: {request.dam_id}",
-    )
+        raise HTTPException(
+            status_code=404,
+            detail=f"Dam not found: {request.dam_id}",
+        )
 
     scenario = build_scenario(
-        dam_id=request.dam_id,
+        dam=dam,
         scenario=request.scenario,
         reservoir_level=request.reservoir_level,
         breach_width=request.breach_width,
