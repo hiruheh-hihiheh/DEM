@@ -23,6 +23,11 @@ class SPHRunner:
             / "DualSPHysics5.4_win64.exe"
         )
 
+        self.partvtk = (
+            self.bin_dir
+            / "PartVTK_win64.exe"
+        )
+
     def validate(self) -> None:
         if not self.gencase.exists():
             raise FileNotFoundError(
@@ -32,6 +37,11 @@ class SPHRunner:
         if not self.solver.exists():
             raise FileNotFoundError(
                 f"DualSPHysics solver not found: {self.solver}"
+            )
+
+        if not self.partvtk.exists():
+            raise FileNotFoundError(
+                f"PartVTK not found: {self.partvtk}"
             )
 
     def run(
@@ -89,9 +99,9 @@ class SPHRunner:
         )
 
         if gencase_result.returncode != 0:
-            log_path = run_dir / "gencase.log"
+            gencase_log = run_dir / "gencase.log"
 
-            log_path.write_text(
+            gencase_log.write_text(
                 gencase_result.stdout
                 + "\n"
                 + gencase_result.stderr,
@@ -100,7 +110,7 @@ class SPHRunner:
 
             raise RuntimeError(
                 "GenCase failed. "
-                f"See log: {log_path}"
+                f"See log: {gencase_log}"
             )
 
         generated_case = (
@@ -108,6 +118,10 @@ class SPHRunner:
             / case_name
         )
 
+        # Existing working solver invocation.
+        #
+        # Do not pass an explicit .xml suffix here.
+        # DualSPHysics expects the case prefix only.
         solver_command = [
             str(self.solver),
             "-gpu",
@@ -123,9 +137,9 @@ class SPHRunner:
             check=False,
         )
 
-        log_path = run_dir / "solver.log"
+        solver_log = run_dir / "solver.log"
 
-        log_path.write_text(
+        solver_log.write_text(
             solver_result.stdout
             + "\n"
             + solver_result.stderr,
@@ -135,11 +149,75 @@ class SPHRunner:
         if solver_result.returncode != 0:
             raise RuntimeError(
                 "DualSPHysics failed. "
-                f"See log: {log_path}"
+                f"See log: {solver_log}"
+            )
+
+        # DualSPHysics writes per-timestep particle
+        # data into <case_out>/data.
+        data_dir = output_dir / "data"
+
+        if not data_dir.is_dir():
+            raise RuntimeError(
+                "DualSPHysics completed, but the expected "
+                "particle data directory was not found. "
+                f"Expected: {data_dir}"
+            )
+
+        particles_dir = output_dir / "particles"
+        particles_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        # Official-style DualSPHysics 5.4 post-processing:
+        #
+        # PartVTK -dir <case_out>/data
+        #         -file <case_name>
+        #         -out <particles_dir>
+        #         -save:fluid
+        #
+        # This converts binary particle data into a VTK
+        # file series such as:
+        #
+        # particles/PartFluid_0000.vtk
+        # particles/PartFluid_0001.vtk
+        # ...
+        partvtk_command = [
+            str(self.partvtk),
+            "-dirdata",
+            str(data_dir),
+            "-savevtk",
+            str(particles_dir / "PartFluid"),
+            "-onlytype:-all,fluid",
+            "-vars:+idp,+vel,+rhop,+press,+vor,+energy",
+        ]
+
+        partvtk_result = subprocess.run(
+            partvtk_command,
+            cwd=str(output_dir),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        partvtk_log = run_dir / "partvtk.log"
+
+        partvtk_log.write_text(
+            partvtk_result.stdout
+            + "\n"
+            + partvtk_result.stderr,
+            encoding="utf-8",
+        )
+
+        if partvtk_result.returncode != 0:
+            raise RuntimeError(
+                "PartVTK failed. "
+                f"See log: {partvtk_log}"
             )
 
         return {
             "simulation_id": simulation_id,
             "output_directory": str(output_dir),
-            "log_file": str(log_path),
+            "log_file": str(solver_log),
+            "particles_directory": str(particles_dir),
         }
