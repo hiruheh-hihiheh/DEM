@@ -169,19 +169,7 @@ class SPHRunner:
             exist_ok=True,
         )
 
-        # Official-style DualSPHysics 5.4 post-processing:
-        #
-        # PartVTK -dir <case_out>/data
-        #         -file <case_name>
-        #         -out <particles_dir>
-        #         -save:fluid
-        #
-        # This converts binary particle data into a VTK
-        # file series such as:
-        #
-        # particles/PartFluid_0000.vtk
-        # particles/PartFluid_0001.vtk
-        # ...
+
         partvtk_command = [
             str(self.partvtk),
             "-dirdata",
@@ -219,5 +207,5 @@ class SPHRunner:
             "simulation_id": simulation_id,
             "output_directory": str(output_dir),
             "log_file": str(solver_log),
-            "particles_directory": str(particles_dir),
+            
         }
