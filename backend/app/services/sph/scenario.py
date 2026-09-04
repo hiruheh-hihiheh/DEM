@@ -77,7 +77,7 @@ def build_scenario(
 
     # Keep the first prototype within a manageable
     # numerical scale.
-    scale = 0.05
+    scale = 0.02
 
     scaled_water_height = max(
         0.05,
