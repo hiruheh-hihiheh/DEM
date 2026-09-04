@@ -113,3 +113,12 @@ def get_dams() -> dict:
         "type": "FeatureCollection",
         "features": features,
     }
+
+def get_dam_by_id(dam_id: str) -> dict:
+    data = get_dams()
+
+    for feature in data["features"]:
+        if str(feature["id"]) == str(dam_id):
+            return feature
+
+    raise KeyError(f"Dam not found: {dam_id}")

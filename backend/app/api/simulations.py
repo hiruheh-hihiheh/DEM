@@ -1,3 +1,4 @@
+from app.services.dam_service import get_dam_by_id
 from pathlib import Path
 import os
 
@@ -38,6 +39,14 @@ def run_sph_simulation(
                 "variable is not configured."
             ),
         )
+
+    try:
+     dam = get_dam_by_id(request.dam_id)
+    except KeyError:
+     raise HTTPException(
+        status_code=404,
+        detail=f"Dam not found: {request.dam_id}",
+    )
 
     scenario = build_scenario(
         dam_id=request.dam_id,
