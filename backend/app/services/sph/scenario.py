@@ -31,6 +31,13 @@ class SPHScenario:
     simulation_time: float
     particle_spacing: float
 
+    # Derived simulation geometry
+    water_height: float
+    dam_width: float
+    channel_length: float
+    channel_width: float
+    channel_height: float
+
 
 def build_scenario(
     *,
@@ -45,16 +52,71 @@ def build_scenario(
 
     properties = dam.get("properties", {})
 
+    dam_height = properties.get("height")
+    full_reservoir_level = properties.get(
+        "full_reservoir_level"
+    )
+
+    # Use the actual FRL as the physical reference when
+    # available. Fall back to dam height only when FRL
+    # is unavailable.
+    reference_level = (
+        full_reservoir_level
+        if full_reservoir_level is not None
+        else dam_height
+    )
+
+    if reference_level is None:
+        reference_level = 1.0
+
+    # Convert requested percentage into a physical
+    # water elevation relative to the chosen reference.
+    water_height = (
+        reference_level * reservoir_level / 100.0
+    )
+
+    # Keep the first prototype within a manageable
+    # numerical scale.
+    scale = 0.05
+
+    scaled_water_height = max(
+        0.05,
+        water_height * scale,
+    )
+
+    scaled_dam_height = max(
+        0.10,
+        (dam_height or reference_level) * scale,
+    )
+
+    scaled_dam_width = max(
+        0.10,
+        scaled_dam_height * 0.30,
+    )
+
+    scaled_channel_length = max(
+        1.60,
+        scaled_dam_height * 8.0,
+    )
+
+    scaled_channel_width = max(
+        0.67,
+        scaled_dam_width * 4.0,
+    )
+
+    scaled_channel_height = max(
+        0.40,
+        scaled_dam_height * 1.5,
+    )
+
     return SPHScenario(
         dam_id=str(dam["id"]),
         dam_name=properties.get("name") or "Unknown Dam",
         river=properties.get("river"),
         state=properties.get("state"),
 
-        dam_height=properties.get("height"),
-        full_reservoir_level=properties.get(
-            "full_reservoir_level"
-        ),
+        dam_height=dam_height,
+        full_reservoir_level=full_reservoir_level,
         max_water_level=properties.get(
             "max_water_level"
         ),
@@ -72,4 +134,10 @@ def build_scenario(
         breach_time=breach_time,
         simulation_time=simulation_time,
         particle_spacing=particle_spacing,
+
+        water_height=scaled_water_height,
+        dam_width=scaled_dam_width,
+        channel_length=scaled_channel_length,
+        channel_width=scaled_channel_width,
+        channel_height=scaled_channel_height,
     )
