@@ -161,6 +161,26 @@ def generate_xml(
 
                     </drawbox>
 
+                    <!-- Solid dam wall -->
+
+                    <drawbox>
+
+                        <boxfill>
+                            solid
+                        </boxfill>
+
+                        <point
+                            x="{reservoir_length}"
+                            y="0"
+                            z="0" />
+
+                        <size
+                            x="{dam_width}"
+                            y="{channel_width}"
+                            z="{channel_height}" />
+
+                    </drawbox>
+
                 </mainlist>
 
             </commands>
