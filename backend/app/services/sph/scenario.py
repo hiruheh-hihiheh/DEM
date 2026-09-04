@@ -1,3 +1,5 @@
+# backend/app/services/sph/scenario.py
+
 from dataclasses import dataclass
 from typing import Literal
 
@@ -12,6 +14,12 @@ ScenarioType = Literal[
 
 @dataclass(frozen=True)
 class SPHScenario:
+    """
+    SPH simulation scenario.
+
+    breach_time is reserved for the future time-dependent breach implementation; the current breach geometry is instantaneous at simulation start.
+    """
+
     dam_id: str
     dam_name: str
     river: str | None
@@ -27,7 +35,10 @@ class SPHScenario:
     scenario: ScenarioType
     reservoir_level: float
     breach_width: float
+
+    # breach_time is reserved for the future time-dependent breach implementation; the current breach geometry is instantaneous at simulation start.
     breach_time: float
+
     simulation_time: float
     particle_spacing: float
 
@@ -37,6 +48,35 @@ class SPHScenario:
     channel_length: float
     channel_width: float
     channel_height: float
+
+
+def _validate_breach_timing(
+    breach_width: float,
+    breach_time: float,
+) -> tuple[float, float]:
+    """
+    Validate breach timing semantics.
+
+    breach_time is reserved for the future time-dependent breach implementation; the current breach geometry is instantaneous at simulation start.
+    """
+
+    try:
+        breach_width_value = float(breach_width)
+        breach_time_value = float(breach_time)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "breach_width and breach_time must be numeric"
+        ) from exc
+
+    if not breach_time_value >= 0.0:
+        raise ValueError("breach_time must be >= 0.")
+
+    if breach_width_value == 0.0 and breach_time_value != 0.0:
+        raise ValueError(
+            "breach_time must be 0 when breach_width is 0."
+        )
+
+    return breach_width_value, breach_time_value
 
 
 def build_scenario(
@@ -49,6 +89,11 @@ def build_scenario(
     simulation_time: float,
     particle_spacing: float,
 ) -> SPHScenario:
+
+    breach_width, breach_time = _validate_breach_timing(
+        breach_width,
+        breach_time,
+    )
 
     properties = dam.get("properties", {})
 
