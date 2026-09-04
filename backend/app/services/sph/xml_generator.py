@@ -3,6 +3,122 @@ from pathlib import Path
 from app.services.sph.scenario import SPHScenario
 
 
+# Moving gate mk value.
+#
+# This is intentionally far away from mk=0, which is used for the
+# fixed channel/dam boundary particles.
+BREACH_GATE_MK = 200
+
+# Short, fixed gate-lift duration for the scaled prototype.
+#
+# This is the time taken by the gate to move from fully closed to
+# fully open once breach_time is reached.
+BREACH_LIFT_DURATION = 0.5
+
+# Extra vertical clearance so the gate bottom clears the channel top.
+BREACH_LIFT_CLEARANCE = 0.05
+
+# Number of interpolation points used for the smooth gate lift.
+BREACH_MOTION_STEPS = 50
+
+# Small time epsilon used to avoid duplicate/zero-length motion entries.
+MOTION_EPS = 1e-6
+
+
+def _smoothstep(progress: float) -> float:
+    """
+    Smooth Hermite interpolation between 0 and 1.
+    """
+    progress = min(max(progress, 0.0), 1.0)
+    return progress * progress * (3.0 - 2.0 * progress)
+
+
+def _write_gate_motion(
+    motion_path: Path,
+    breach_time: float,
+    simulation_time: float,
+    lift_duration: float,
+    lift_distance: float,
+) -> float:
+    """
+    Write a DualSPHysics Motion08-style movement file.
+
+    File columns:
+
+        time x y z
+
+    The gate is treated as a moving boundary whose prescribed movement
+    is relative to its initial position:
+
+        - remain at 0,0,0 until breach_time
+        - lift smoothly in +Z
+        - hold open until the end of the simulated time window
+    """
+
+    end_time = max(float(simulation_time), 0.0)
+    start_open = max(float(breach_time), 0.0)
+
+    points = [(0.0, 0.0)]
+
+    if end_time <= MOTION_EPS:
+        points = [(0.0, 0.0)]
+        duration = MOTION_EPS
+
+    else:
+        # Hold closed until breach_time.
+        if start_open > 0.0:
+            hold_time = min(start_open, end_time)
+            if hold_time > MOTION_EPS:
+                points.append((hold_time, 0.0))
+
+        # Smooth upward lift.
+        if start_open < end_time and lift_duration > MOTION_EPS:
+            lift_end = min(start_open + lift_duration, end_time)
+            span = lift_end - start_open
+
+            if span > MOTION_EPS:
+                for i in range(1, BREACH_MOTION_STEPS + 1):
+                    t = start_open + span * (i / BREACH_MOTION_STEPS)
+
+                    if t > end_time:
+                        t = end_time
+
+                    progress = (t - start_open) / lift_duration
+                    z = lift_distance * _smoothstep(progress)
+
+                    points.append((t, z))
+
+        # Hold open until TimeMax if the lift finished earlier.
+        last_t, last_z = points[-1]
+        if end_time - last_t > MOTION_EPS:
+            points.append((end_time, last_z))
+
+        # Remove near-duplicate time stamps.
+        cleaned = []
+        for t, z in points:
+            if cleaned and abs(t - cleaned[-1][0]) <= MOTION_EPS:
+                cleaned[-1] = (cleaned[-1][0], z)
+            else:
+                cleaned.append((t, z))
+
+        points = cleaned
+        duration = max(points[-1][0], MOTION_EPS)
+
+    lines = []
+
+    for t, z in points:
+        lines.append(
+            f"{t:.8f} 0.000000 0.000000 {z:.8f}"
+        )
+
+    motion_path.write_text(
+        "\n".join(lines) + "\n",
+        encoding="utf-8",
+    )
+
+    return duration
+
+
 def generate_xml(
     scenario: SPHScenario,
     output_path: Path,
@@ -13,6 +129,13 @@ def generate_xml(
     The geometry is a scaled prototype derived from the
     selected dam's physical properties.
     """
+
+    output_path = Path(output_path)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     # Use derived geometry from SPHScenario.
     water_height = scenario.water_height
@@ -43,7 +166,20 @@ def generate_xml(
     breach_width = max(0.0, scenario.breach_width)
     breach_width = min(breach_width, channel_width)
 
+    motion_path = output_path.with_name(
+        f"{output_path.stem}_gate_motion.txt"
+    )
+
+    motion_xml = ""
+
     if breach_width <= 0:
+        # No breach: keep the original full solid dam wall.
+        #
+        # Also remove any stale gate-motion file from a previous
+        # breach run so the runner does not copy it unnecessarily.
+        if motion_path.exists():
+            motion_path.unlink()
+
         dam_wall_xml = f"""                    <!-- Dam wall without breach -->
 
                     <drawbox>
@@ -63,13 +199,43 @@ def generate_xml(
                             z="{channel_height}" />
 
                     </drawbox>"""
+
     else:
+        # Centered breach.
+        #
+        # Layout:
+        #
+        #   left fixed dam | moving gate | right fixed dam
+        #
         left_width = (channel_width - breach_width) / 2.0
         right_y = left_width + breach_width
 
-        dam_wall_xml = f"""                    <!-- Dam wall with centered breach -->
+        gate_clearance = max(
+            BREACH_LIFT_CLEARANCE,
+            scenario.particle_spacing,
+        )
 
-                    <!-- Left dam section -->
+        gate_lift_distance = channel_height + gate_clearance
+
+        # The gate must be able to move upward without immediately
+        # leaving the simulation domain.
+        domain_height = max(
+            domain_height,
+            channel_height + gate_lift_distance + gate_clearance,
+        )
+
+        motion_duration = _write_gate_motion(
+            motion_path=motion_path,
+            breach_time=scenario.breach_time,
+            simulation_time=scenario.simulation_time,
+            lift_duration=BREACH_LIFT_DURATION,
+            lift_distance=gate_lift_distance,
+        )
+
+        if left_width > 0.0:
+            fixed_sections_xml = f"""                    <!-- Left dam section -->
+
+                    <setmkbound mk="0" />
 
                     <drawbox>
 
@@ -91,6 +257,8 @@ def generate_xml(
 
                     <!-- Right dam section -->
 
+                    <setmkbound mk="0" />
+
                     <drawbox>
 
                         <boxfill>
@@ -107,7 +275,44 @@ def generate_xml(
                             y="{left_width}"
                             z="{channel_height}" />
 
+                    </drawbox>
+
+"""
+        else:
+            fixed_sections_xml = ""
+
+        dam_wall_xml = f"""                    <!-- Dam wall with centered breach -->
+
+{fixed_sections_xml}                    <!-- Moving breach gate -->
+
+                    <setmkbound mk="{BREACH_GATE_MK}" />
+
+                    <drawbox>
+
+                        <boxfill>
+                            solid
+                        </boxfill>
+
+                        <point
+                            x="{reservoir_length}"
+                            y="{left_width}"
+                            z="0" />
+
+                        <size
+                            x="{dam_width}"
+                            y="{breach_width}"
+                            z="{channel_height}" />
+
                     </drawbox>"""
+
+        motion_xml = f"""        <motion>
+            <objreal ref="{BREACH_GATE_MK}">
+                <begin mov="1" start="0"/>
+                <mvfile id="1" duration="{motion_duration:.8f}">
+                    <file name="{motion_path.name}" fields="4" fieldtime="0" fieldx="1" fieldy="2" fieldz="3"/>
+                </mvfile>
+            </objreal>
+        </motion>"""
 
     xml = f"""<?xml version="1.0" encoding="UTF-8" ?>
 <case>
@@ -238,6 +443,8 @@ def generate_xml(
 
         </geometry>
 
+{motion_xml}
+
     </casedef>
 
     <execution>
@@ -352,11 +559,6 @@ def generate_xml(
 
 </case>
 """
-
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
 
     output_path.write_text(
         xml,

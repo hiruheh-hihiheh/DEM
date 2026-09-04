@@ -52,6 +52,9 @@ class SPHRunner:
 
         self.validate()
 
+        xml_path = Path(xml_path)
+        runs_dir = Path(runs_dir)
+
         simulation_id = str(uuid4())[:8]
 
         run_dir = runs_dir / simulation_id
@@ -73,6 +76,21 @@ class SPHRunner:
             ),
             encoding="utf-8",
         )
+
+        # The XML generator writes a sidecar motion file only when a
+        # breach gate exists.
+        #
+        # Copy it next to the copied case-definition XML so GenCase can
+        # resolve the relative <file name="..."/> reference.
+        motion_source = (
+            xml_path.parent
+            / f"{xml_path.stem}_gate_motion.txt"
+        )
+
+        if motion_source.exists():
+            (run_dir / motion_source.name).write_bytes(
+                motion_source.read_bytes()
+            )
 
         output_dir = (
             run_dir
@@ -111,6 +129,19 @@ class SPHRunner:
             raise RuntimeError(
                 "GenCase failed. "
                 f"See log: {gencase_log}"
+            )
+
+        # The generated case XML may still reference the motion file by
+        # filename only. The solver is executed from output_dir, so the
+        # motion file is copied there as well.
+        if motion_source.exists():
+            output_dir.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            (output_dir / motion_source.name).write_bytes(
+                motion_source.read_bytes()
             )
 
         generated_case = (
@@ -169,7 +200,6 @@ class SPHRunner:
             exist_ok=True,
         )
 
-
         partvtk_command = [
             str(self.partvtk),
             "-dirdata",
@@ -207,5 +237,4 @@ class SPHRunner:
             "simulation_id": simulation_id,
             "output_directory": str(output_dir),
             "log_file": str(solver_log),
-            
         }
