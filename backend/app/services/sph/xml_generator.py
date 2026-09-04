@@ -10,26 +10,35 @@ def generate_xml(
     """
     Generate a DualSPHysics case-definition XML.
 
-    This first version intentionally targets the small
-    laboratory dam-break scenario we validated manually.
+    The geometry is a scaled prototype derived from the
+    selected dam's physical properties.
     """
 
-    water_height = max(
-        0.05,
-        0.5 * scenario.reservoir_level / 100.0,
+    # Use derived geometry from SPHScenario.
+    water_height = scenario.water_height
+    channel_length = scenario.channel_length
+    channel_width = scenario.channel_width
+    channel_height = scenario.channel_height
+    dam_width = scenario.dam_width
+
+    # Keep the first reservoir section reasonably sized
+    # relative to the downstream channel.
+    reservoir_length = max(
+        0.40,
+        channel_length * 0.25,
     )
 
-    if scenario.scenario == "normal":
-        water_height *= 0.6
+    # Leave some headroom above the initial water column.
+    domain_height = max(
+        channel_height + 0.20,
+        water_height + 0.20,
+    )
 
-    elif scenario.scenario == "partial":
-        water_height *= 0.8
-
-    elif scenario.scenario == "extreme":
-        water_height = min(
-            0.6,
-            water_height * 1.2,
-        )
+    # Keep the water safely below the top of the channel.
+    water_height = min(
+        water_height,
+        channel_height * 0.85,
+    )
 
     xml = f"""<?xml version="1.0" encoding="UTF-8" ?>
 <case>
@@ -92,9 +101,9 @@ def generate_xml(
                     z="-0.05" />
 
                 <pointmax
-                    x="2"
-                    y="1"
-                    z="1.2" />
+                    x="{channel_length + 0.10}"
+                    y="{channel_width + 0.10}"
+                    z="{domain_height}" />
 
             </definition>
 
@@ -108,7 +117,8 @@ def generate_xml(
 
                     <setdrawmode mode="full" />
 
-                    <!-- Initial water -->
+                    <!-- Initial reservoir water -->
+
                     <setmkfluid mk="0" />
 
                     <drawbox>
@@ -123,13 +133,14 @@ def generate_xml(
                             z="0" />
 
                         <size
-                            x="0.4"
-                            y="0.67"
+                            x="{reservoir_length}"
+                            y="{channel_width}"
                             z="{water_height}" />
 
                     </drawbox>
 
-                    <!-- Channel -->
+                    <!-- Downstream channel boundary -->
+
                     <setmkbound mk="0" />
 
                     <drawbox>
@@ -144,9 +155,9 @@ def generate_xml(
                             z="0" />
 
                         <size
-                            x="1.6"
-                            y="0.67"
-                            z="0.4" />
+                            x="{channel_length}"
+                            y="{channel_width}"
+                            z="{channel_height}" />
 
                     </drawbox>
 
@@ -229,8 +240,6 @@ def generate_xml(
             <parameter
                 key="DtAllParticles"
                 value="0" />
-
-
 
             <parameter
                 key="TimeMax"
