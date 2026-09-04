@@ -40,6 +40,75 @@ def generate_xml(
         channel_height * 0.85,
     )
 
+    breach_width = max(0.0, scenario.breach_width)
+    breach_width = min(breach_width, channel_width)
+
+    if breach_width <= 0:
+        dam_wall_xml = f"""                    <!-- Dam wall without breach -->
+
+                    <drawbox>
+
+                        <boxfill>
+                            solid
+                        </boxfill>
+
+                        <point
+                            x="{reservoir_length}"
+                            y="0"
+                            z="0" />
+
+                        <size
+                            x="{dam_width}"
+                            y="{channel_width}"
+                            z="{channel_height}" />
+
+                    </drawbox>"""
+    else:
+        left_width = (channel_width - breach_width) / 2.0
+        right_y = left_width + breach_width
+
+        dam_wall_xml = f"""                    <!-- Dam wall with centered breach -->
+
+                    <!-- Left dam section -->
+
+                    <drawbox>
+
+                        <boxfill>
+                            solid
+                        </boxfill>
+
+                        <point
+                            x="{reservoir_length}"
+                            y="0"
+                            z="0" />
+
+                        <size
+                            x="{dam_width}"
+                            y="{left_width}"
+                            z="{channel_height}" />
+
+                    </drawbox>
+
+                    <!-- Right dam section -->
+
+                    <drawbox>
+
+                        <boxfill>
+                            solid
+                        </boxfill>
+
+                        <point
+                            x="{reservoir_length}"
+                            y="{right_y}"
+                            z="0" />
+
+                        <size
+                            x="{dam_width}"
+                            y="{left_width}"
+                            z="{channel_height}" />
+
+                    </drawbox>"""
+
     xml = f"""<?xml version="1.0" encoding="UTF-8" ?>
 <case>
 
@@ -161,25 +230,7 @@ def generate_xml(
 
                     </drawbox>
 
-                    <!-- Solid dam wall -->
-
-                    <drawbox>
-
-                        <boxfill>
-                            solid
-                        </boxfill>
-
-                        <point
-                            x="{reservoir_length}"
-                            y="0"
-                            z="0" />
-
-                        <size
-                            x="{dam_width}"
-                            y="{channel_width}"
-                            z="{channel_height}" />
-
-                    </drawbox>
+{dam_wall_xml}
 
                 </mainlist>
 
