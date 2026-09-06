@@ -61,7 +61,7 @@
                 <pointmax
                     x="3.14"
                     y="0.77"
-                    z="0.77" />
+                    z="1.2400000000000002" />
 
             </definition>
 
@@ -93,7 +93,7 @@
                         <size
                             x="0.76"
                             y="0.67"
-                            z="0.255" />
+                            z="0.34" />
 
                     </drawbox>
 
@@ -123,6 +123,8 @@
 
                     <!-- Left dam section -->
 
+                    <setmkbound mk="0" />
+
                     <drawbox>
 
                         <boxfill>
@@ -143,6 +145,8 @@
 
                     <!-- Right dam section -->
 
+                    <setmkbound mk="0" />
+
                     <drawbox>
 
                         <boxfill>
@@ -161,11 +165,42 @@
 
                     </drawbox>
 
+                    <!-- Moving breach gate -->
+
+                    <setmkbound mk="200" />
+
+                    <drawbox>
+
+                        <boxfill>
+                            solid
+                        </boxfill>
+
+                        <point
+                            x="0.76"
+                            y="0.23500000000000001"
+                            z="0.0" />
+
+                        <size
+                            x="0.11399999999999999"
+                            y="0.2"
+                            z="0.5700000000000001" />
+
+                    </drawbox>
+
                 </mainlist>
 
             </commands>
 
         </geometry>
+
+        <motion>
+            <objreal ref="200">
+                <begin mov="1" start="0"/>
+                <mvfile id="1" duration="7.00000000">
+                    <file name="HADR_DamBreak_Def_gate_motion.txt" fields="4" fieldtime="0" fieldx="1" fieldy="2" fieldz="3"/>
+                </mvfile>
+            </objreal>
+        </motion>
 
     </casedef>
 
@@ -243,7 +278,7 @@
 
             <parameter
                 key="TimeMax"
-                value="3.0" />
+                value="7.0" />
 
             <parameter
                 key="TimeOut"
@@ -271,7 +306,7 @@
                 <posmax
                     x="default"
                     y="default"
-                    z="default + 50%" />
+                    z="1.24000000" />
 
             </simulationdomain>
 

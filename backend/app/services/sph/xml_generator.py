@@ -35,6 +35,9 @@ def _smoothstep(progress: float) -> float:
 
 def _write_gate_motion(
     motion_path: Path,
+    initial_x: float,
+    initial_y: float,
+    initial_z: float,
     breach_time: float,
     simulation_time: float,
     lift_duration: float,
@@ -45,19 +48,27 @@ def _write_gate_motion(
 
     File columns:
 
-        time x y z
+        time X Y Z
 
-    The gate is treated as a moving boundary whose prescribed movement
-    is relative to its initial position:
+    For this breach gate:
 
-        - remain at 0,0,0 until breach_time
-        - lift smoothly in +Z
-        - hold open until the end of the simulated time window
+        - X remains at the gate's initial X position.
+        - Y remains at the gate's initial Y position.
+        - Z starts at the gate's initial Z position.
+        - Z increases smoothly during the breach lift.
+
+    The gate therefore remains aligned with the breach opening and
+    only moves upward in +Z.
     """
 
     end_time = max(float(simulation_time), 0.0)
     start_open = max(float(breach_time), 0.0)
 
+    # Each point stores:
+    #
+    #   time, vertical_offset
+    #
+    # vertical_offset is added to initial_z when writing the file.
     points = [(0.0, 0.0)]
 
     if end_time <= MOTION_EPS:
@@ -84,31 +95,33 @@ def _write_gate_motion(
                         t = end_time
 
                     progress = (t - start_open) / lift_duration
-                    z = lift_distance * _smoothstep(progress)
+                    z_offset = lift_distance * _smoothstep(progress)
 
-                    points.append((t, z))
+                    points.append((t, z_offset))
 
         # Hold open until TimeMax if the lift finished earlier.
-        last_t, last_z = points[-1]
+        last_t, last_z_offset = points[-1]
         if end_time - last_t > MOTION_EPS:
-            points.append((end_time, last_z))
+            points.append((end_time, last_z_offset))
 
         # Remove near-duplicate time stamps.
         cleaned = []
-        for t, z in points:
+        for t, z_offset in points:
             if cleaned and abs(t - cleaned[-1][0]) <= MOTION_EPS:
-                cleaned[-1] = (cleaned[-1][0], z)
+                cleaned[-1] = (cleaned[-1][0], z_offset)
             else:
-                cleaned.append((t, z))
+                cleaned.append((t, z_offset))
 
         points = cleaned
         duration = max(points[-1][0], MOTION_EPS)
 
     lines = []
 
-    for t, z in points:
+    for t, z_offset in points:
+        z = initial_z + z_offset
+
         lines.append(
-            f"{t:.8f} 0.000000 0.000000 {z:.8f}"
+            f"{t:.8f} {initial_x:.8f} {initial_y:.8f} {z:.8f}"
         )
 
     motion_path.write_text(
@@ -172,6 +185,10 @@ def generate_xml(
 
     motion_xml = ""
 
+    # If this remains None, the original default +50% simulation domain
+    # is preserved for intact-dam runs.
+    simulation_posmax_z = None
+
     if breach_width <= 0:
         # No breach: keep the original full solid dam wall.
         #
@@ -210,22 +227,54 @@ def generate_xml(
         left_width = (channel_width - breach_width) / 2.0
         right_y = left_width + breach_width
 
+        # Initial gate position.
+        #
+        # This is the same point used by the gate <drawbox> below.
+        gate_x = reservoir_length
+        gate_y = left_width
+        gate_z = 0.0
+
         gate_clearance = max(
             BREACH_LIFT_CLEARANCE,
             scenario.particle_spacing,
         )
 
+        # The gate min-Z moves from gate_z to gate_z + gate_lift_distance.
         gate_lift_distance = channel_height + gate_clearance
 
-        # The gate must be able to move upward without immediately
-        # leaving the simulation domain.
+        # Final vertical extent of the lifted gate.
+        #
+        # The gate box height is channel_height. After the lift, its top is:
+        #
+        #   gate_z_final + channel_height
+        #
+        gate_top_final = (
+            gate_z
+            + gate_lift_distance
+            + channel_height
+        )
+
+        # Keep GenCase's definition domain large enough too.
         domain_height = max(
             domain_height,
-            channel_height + gate_lift_distance + gate_clearance,
+            gate_top_final + gate_clearance,
+        )
+
+        # The solver's <simulationdomain> must also be large enough.
+        #
+        # Do not rely on "default + 50%" for moving-gate runs because
+        # that default is derived from the initial particle map and can
+        # be too small for the lifted gate.
+        simulation_posmax_z = max(
+            domain_height,
+            gate_top_final + gate_clearance,
         )
 
         motion_duration = _write_gate_motion(
             motion_path=motion_path,
+            initial_x=gate_x,
+            initial_y=gate_y,
+            initial_z=gate_z,
             breach_time=scenario.breach_time,
             simulation_time=scenario.simulation_time,
             lift_duration=BREACH_LIFT_DURATION,
@@ -294,9 +343,9 @@ def generate_xml(
                         </boxfill>
 
                         <point
-                            x="{reservoir_length}"
-                            y="{left_width}"
-                            z="0" />
+                            x="{gate_x}"
+                            y="{gate_y}"
+                            z="{gate_z}" />
 
                         <size
                             x="{dam_width}"
@@ -313,6 +362,40 @@ def generate_xml(
                 </mvfile>
             </objreal>
         </motion>"""
+
+    if simulation_posmax_z is None:
+        # Intact-dam behavior remains unchanged.
+        simulation_domain_xml = """            <simulationdomain>
+
+                <posmin
+                    x="default"
+                    y="default"
+                    z="default" />
+
+                <posmax
+                    x="default"
+                    y="default"
+                    z="default + 50%" />
+
+            </simulationdomain>"""
+    else:
+        # Moving-gate runs use an explicit Z maximum.
+        #
+        # X/Y remain default so the previous lateral domain behavior
+        # is preserved.
+        simulation_domain_xml = f"""            <simulationdomain>
+
+                <posmin
+                    x="default"
+                    y="default"
+                    z="default" />
+
+                <posmax
+                    x="default"
+                    y="default"
+                    z="{simulation_posmax_z:.8f}" />
+
+            </simulationdomain>"""
 
     xml = f"""<?xml version="1.0" encoding="UTF-8" ?>
 <case>
@@ -539,19 +622,7 @@ def generate_xml(
                 key="RhopOutMax"
                 value="1300" />
 
-            <simulationdomain>
-
-                <posmin
-                    x="default"
-                    y="default"
-                    z="default" />
-
-                <posmax
-                    x="default"
-                    y="default"
-                    z="default + 50%" />
-
-            </simulationdomain>
+{simulation_domain_xml}
 
         </parameters>
 
