@@ -196,7 +196,7 @@
         <motion>
             <objreal ref="200">
                 <begin mov="1" start="0"/>
-                <mvfile id="1" duration="7.00000000">
+                <mvfile id="1" duration="4.00000000">
                     <file name="HADR_DamBreak_Def_gate_motion.txt" fields="4" fieldtime="0" fieldx="1" fieldy="2" fieldz="3"/>
                 </mvfile>
             </objreal>
@@ -278,7 +278,7 @@
 
             <parameter
                 key="TimeMax"
-                value="7.0" />
+                value="4.0" />
 
             <parameter
                 key="TimeOut"
