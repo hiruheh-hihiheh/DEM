@@ -1,0 +1,39 @@
+Part;TimeStep [s];Steps;DTsMin;PartRuntime [s];NpSave;NpSim;NpNew;NpOut;NctSim;NpAlloc [X];NctAlloc [X];SimRuntime [s];NpbSim;NpfSim;NpNormal;NpOutPos;NpOutRho;NpOutMov;DtMin [s];DtMax [s];MemCPU [MiB];MemGPU [MiB];MemGPU_Cells [MiB];NpAlloc;NctAlloc
+0;0;0;0;0.000000;64,215;64,215;0;0;576;1.001993;105.607639;0.000000;58,449;5,766;64,215;0;0;0;0;0;5.566549;10.065891;0.928230;64,343;60,830
+1;0.05053116401601872;66;0;0.045831;64,215;64,215;0;0;576;1.001993;105.607639;0.045831;58,449;5,766;64,215;0;0;0;0.0007740921961606138;0.0007820618667409532;5.566549;10.802238;0.928230;64,343;60,830
+2;0.1004860405842517;65;0;0.042667;64,215;64,215;0;0;576;1.001993;105.607639;0.090100;58,449;5,766;64,215;0;0;0;0.0007630024333532923;0.0007740073501529017;5.566549;10.802238;0.928230;64,343;60,830
+3;0.1506521371323385;66;0;0.043258;64,215;64,215;0;0;576;1.001993;105.607639;0.134673;58,449;5,766;64,215;0;0;0;0.0007494546969617155;0.0007632066681344289;5.566549;10.802238;0.928230;64,343;60,830
+4;0.2005506730531375;67;0;0.043963;64,215;64,215;0;0;576;1.001993;105.607639;0.180491;58,449;5,766;64,215;0;0;0;0.0007295503703141806;0.0007491090785489662;5.566549;10.802238;0.928230;64,343;60,830
+5;0.2504522438255593;75;0;0.044903;64,215;64,215;0;0;845;1.001993;71.988166;0.227131;58,449;5,766;64,215;0;0;0;0.0005544032712263818;0.0007286205151832074;5.566549;10.802238;0.928230;64,343;60,830
+6;0.3000511474157716;103;0;0.062886;64,215;64,215;0;0;845;1.001993;71.988166;0.291393;58,449;5,766;64,215;0;0;0;0.0004208838485934595;0.0005524457033097255;5.566549;10.802238;0.928230;64,343;60,830
+7;0.3502302805047821;126;0;0.079676;64,215;64,215;0;0;1,014;1.001993;59.990138;0.373412;58,449;5,766;64,215;0;0;0;0.0003378415263330346;0.0004411836908403428;5.566549;10.802238;0.928230;64,343;60,830
+8;0.4001023314797434;139;0;0.088860;64,215;64,215;0;0;1,350;1.001993;45.059259;0.463886;58,449;5,766;64,215;0;0;0;0.0003197204763573695;0.0003870807956751903;5.566549;10.802238;0.928230;64,343;60,830
+9;0.4500075961381924;160;0;0.098957;64,215;64,215;0;0;1,680;1.001993;36.208333;0.564251;58,449;5,766;64,215;0;0;0;0.0002942045821682895;0.0003252196494687532;5.566549;10.802238;0.928230;64,343;60,830
+10;0.5001383561975502;165;0;0.101042;64,215;64,215;0;0;1,792;1.001993;33.945312;0.668611;58,449;5,766;64,215;0;0;0;0.0002873438638089459;0.0003343529747225699;5.566549;10.802238;0.928230;64,343;60,830
+
+# Part:  Number of output file with particles data.
+# TimeStep [s]:  Physical time of simulation.
+# Steps:  Number of calculation steps since the previous PART.
+# DTsMin:  Number of times the Dt is updated with the minimum allowed value (can be 2 times per step when Symplectic is used).
+# PartRuntime [s]:  Runtime of last PART simulation.
+# NpSave:  Number of selected particles to save.
+# NpSim:  Number of particles used in simulation (normal + periodic particles).
+# NpNew:  Number of new fluid particles created by inlet conditions since the previous PART.
+# NpOut:  Number of excluded fluid particles since the previous PART.
+# NctSim:  Number of cells used in simulation for particle search.
+# NpAlloc [X]:  Over-allocation memory for particles NpAlloc/NpSim.
+# NctAlloc [X]:  Over-allocation memory for cells NctAlloc/NctSim.
+# SimRuntime [s]:  Total runtime of simulation (initialisation tasks not included).
+# NpbSim:  Number of fixed and moving particles (includes periodic particles).
+# NpfSim:  Number of fluid and floating particles (includes periodic particles).
+# NpNormal:  Total number of particles without periodic particles.
+# NpOutPos:  Number of excluded particles due to invalid position.
+# NpOutRho:  Number of excluded particles due to invalid density.
+# NpOutMov:  Number of excluded particles due to invalid movement.
+# DtMin [s]:  Minimum value of Dt since the previous PART.
+# DtMax [s]:  Maximum value of Dt since the previous PART.
+# MemCPU [MiB]:  Current CPU memory allocated (only includes the most memory intensive objects).
+# MemGPU [MiB]:  Current GPU memory allocated (only includes the most memory intensive objects).
+# MemGPU_Cells [MiB]:  Current GPU memory allocated for cells according to NctAlloc.
+# NpAlloc:  Number of supported particles with memory allocated.
+# NctAlloc:  Number of supported cells with memory allocated.

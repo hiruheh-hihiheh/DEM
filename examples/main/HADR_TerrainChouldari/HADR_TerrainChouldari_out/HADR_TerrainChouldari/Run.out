@@ -1,0 +1,273 @@
+
+
+ <DUALSPHYSICS5> Copyright (c) 2025 by
+ Dr Jose M. Dominguez Alonso, Prof. Alejandro Crespo,
+ Dr Georgios Fourtakas, Prof. Benedict Rogers,
+ Dr Renato Vacondio, Dr Corrado Altomare,
+ Dr Angelo Tafuni, Dr Orlando Garcia Feal,
+ Dr Ivan Martinez Estevez, Dr Joseph O'Connor,
+ Dr Aaron English, Dr Francesco Ricci,
+ Prof. Moncho Gomez Gesteira, Prof. Peter Stansby
+
+ EPHYSLAB Environmental Physics Laboratory, Universidade de Vigo
+ School of Mechanical, Aerospace and Civil Engineering, University of Manchester
+
+ DualSPHysics is free software: you can redistribute it and/or
+ modify it under the terms of the GNU Lesser General Public License
+ as published by the Free Software Foundation, either version 2.1 of
+ the License, or (at your option) any later version.
+
+ DualSPHysics is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU Lesser General Public License for more details.
+
+ You should have received a copy of the GNU Lesser General Public License
+ along with DualSPHysics. If not, see <http://www.gnu.org/licenses/>.
+
+ Free download source files and documentation from DualSPHysics website (http://dual.sphysics.org).
+ Full list of developers and contributors is available at https://dual.sphysics.org/developers
+ Properly cite the use of DualSPHysics (Dominguez et al., 2022) (https://dual.sphysics.org/references).
+
+
+DualSPHysics5 v5.4.355 (08-04-2025)
+====================================
+[CUDA Capable device(s)]
+  Detected 1 CUDA Capable device(s)
+  CUDA Driver Version / Runtime Version: 13.4 / 12.8
+ 
+Device 0: "NVIDIA GeForce RTX 4050 Laptop GPU"
+  CUDA Capability Major....: 8.9
+  Global memory............: 6140 MiB
+  CUDA Cores...............: 2560 (20 Multiprocessors, 128 CUDA Cores/MP)
+  GPU Max Clock rate.......: 2055 MHz (2.06 GHz)
+  Memory Clock rate........: 8001 Mhz
+  Memory Bus Width.........: 96-bit
+  L2 Cache Size............: 24576 KiB
+  Constant memory..........: 64 KiB
+  Shared memory per block..: 48 KiB
+  Registers per block......: 65536
+  Maximum threads per MP...: 1536
+  Maximum threads per block: 1024
+  Concurrent copy and kernel execution....: Yes with 1 copy engine(s)
+  Run time limit on kernels...............: Yes
+  Integrated GPU sharing Host Memory......: No
+  Support host page-locked memory mapping.: Yes
+  Device has ECC support..................: Disabled
+  CUDA Device Driver Mode (TCC or WDDM)...: WDDM (Windows Display Driver Model)
+  Device supports Unified Addressing (UVA): Yes
+  Device PCI (Domain / Bus / location)....: 0 / 1 / 0
+  Device supports P2P and RDMA............: No
+ 
+[GPU Hardware]
+Device default: 0 "NVIDIA GeForce RTX 4050 Laptop GPU"
+Compute capability: 8.9
+Memory global: 6140 MiB
+Memory shared: 49152 Bytes
+ 
+[Initialising JSphGpuSingle  08-09-2026 14:29:59]
+ProgramFile=".../bin/windows/DualSPHysics5.4_win64.exe"
+Available features: Project Chrono coupling, MoorDynPlus coupling, Wave generation, FlexStruc, mDBC no-slip, GPU execution, OpenMP execution.
+ExecutionDir=".../examples/main/HADR_TerrainChouldari"
+XmlFile=".../HADR_TerrainChouldari/HADR_TerrainChouldari_out/HADR_TerrainChouldari.xml"
+OutputDir=".../HADR_TerrainChouldari/HADR_TerrainChouldari_out/HADR_TerrainChouldari"
+OutputDataDir=".../HADR_TerrainChouldari_out/HADR_TerrainChouldari/data"
+XML-App: GenCase v5.4.354.01 (07-04-2025)
+
+*** WARNING: The XML option 'PartsOutMax' is deprecated. Use 'MinFluidStop' option.
+
+**Basic case configuration is loaded
+**Special case configuration is loaded
+Loading initial state of particles...
+Loaded particles: 64,215
+MapRealPos(border)=(-0.00866025,-0.00866025,0.00697375)-(27.3087,24.0087,2.42429)
+MapRealPos(final)=(-0.00866025,-0.00866025,0.00697375)-(27.3087,24.0087,7.38256)
+**Initial state of particles is loaded
+PosCellCode="13_10_9 (8192,1024,512)"
+PosCellSize=0.346410  (1 x KernelSize)
+**3D-Simulation parameters:
+CaseName="HADR_TerrainChouldari"
+RunName="HADR_TerrainChouldari"
+SavePosDouble=False
+SvExtraParts=""
+SaveFtAce=False
+SvTimers=True
+Boundary="DBC"
+StepAlgorithm="Verlet"
+  VerletSteps=40
+Kernel="CubicSpline"
+  Cubic.a1=0.3183099
+  Cubic.aa=353.6777
+  Cubic.a24=15.31469
+  Cubic.c1=-1061.033
+  Cubic.c2=-265.2583
+  Cubic.d1=795.7748
+  Cubic.od_wdeltap=0.02938355
+Viscosity="Artificial"
+  Visco=0.1
+  ViscoBoundFactor=1
+DensityDiffusion="Fourtakas et al 2019 (inner)"
+  DensityDiffusionValue=0.1
+Shifting="None"
+RigidAlgorithm="None"
+FloatingCount=0
+CaseNp=64,215
+CaseNbound=58,449
+CaseNfixed=54,349
+CaseNmoving=4,100
+CaseNfloat=0
+CaseNfluid=5,766
+PeriodicActive="None"
+Dp=0.1
+KernelH=0.173205  (CoefficientH=1; H/Dp=1.73205)
+KernelSize=0.3464102
+CteB=280285.7
+Gamma=7
+RhopZero=1000
+Cs0=44.29446953345305
+CFLnumber=0.2
+DtIni=0.003910309333704766
+DtMin=0.0001955154695986458
+DtAllParticles=False
+MassFluid=1
+MassBound=1
+TimeMax=0.75
+TimePart=0.05
+Gravity=(0,0,-9.81)
+RhopOut=True
+RhopOutMin=700
+RhopOutMax=1300
+WrnPartsOut=True
+MinFluidStop=0
+NpfMinimum=0
+CellMode="Full"
+ScellDiv=1
+MapCells=(79,70,22)  (121,660 cells)
+CellDomFixed=False
+DomCells=(79,70,22)  (121,660 cells)
+DomCellCode="1+11_11_9"
+ 
+BlockSize calculation mode: Fixed.
+  BsForcesBound=128 (39 regs)
+  BsForcesFluid=128 (56 regs)
+ 
+**CellDiv: Requested gpu memory for 67,553 particles (over-allocation: 1.05X): 1.0 MiB (1 times).
+**CellDiv: Requested GPU memory for 121,660 cells (over-allocation: 211.22X): 1.9 MiB (1 times).
+ 
+RunMode="Pos-Cell - Single-GPU"
+ 
+Particle summary:
+  Fixed....: 54,349  id:(0-54348)   MKs:1 (10)
+  Moving...: 4,100  id:(54349-58448)   MKs:1 (210)
+  Floating.: 0
+  Fluid....: 5,766  id:(58449-64214)   MKs:1 (1)
+
+Total particles: 64,215 (bound=58449 (fx=54349 mv=4100 ft=0) fluid=5766)
+Total MK blocks: 3 (bound=2 (fx=1 mv=1 ft=0) fluid=1)
+ 
+
+*** WARNING: The kernel Cubic Spline is not available in GaugeSystem, so kernel Wendland is used.
+
+
+Initial allocated memory in CPU: 5,836,950 (5.57 MiB)  (9 particle arrays)
+Initial allocated memory in GPU: 11,544,532 (11.01 MiB)  (14 particle arrays)
+Part_0000        64,215 (100.0%) particles successfully stored
+
+[WARNINGS]
+1. The XML option 'PartsOutMax' is deprecated. Use 'MinFluidStop' option.
+2. The kernel Cubic Spline is not available in GaugeSystem, so kernel Wendland is used.
+
+[Initialising simulation (8duc3n27)  08-09-2026 14:29:59]
+PART   PartTime   TotalSteps   Steps    Particles    Cells        Time/Sec   Finish time        
+=====  =========  ===========  =======  ===========  ===========  =========  ===================
+**Updated allocated memory in CPU: 5,836,950 (5.57 MiB)  (9 particle arrays)
+**Updated allocated memory in GPU: 12,316,648 (11.75 MiB)  (15 particle arrays)
+00001   0.050531           65       66       64,215          576       0.96  08-09-2026 14:29:59
+00002   0.100486          130       65       64,215          576       1.11  08-09-2026 14:29:59
+00003   0.150652          196       66       64,215          576       0.95  08-09-2026 14:29:59
+00004   0.200551          263       67       64,215          576       0.95  08-09-2026 14:29:59
+00005   0.250452          338       75       64,215          845       1.30  08-09-2026 14:29:59
+00006   0.300051          441      103       64,215          845       1.61  08-09-2026 14:29:59
+00007   0.350230          567      126       64,215        1,014       1.62  08-09-2026 14:30:00
+00008   0.400102          706      139       64,215        1,350       1.78  08-09-2026 14:30:00
+00009   0.450008          866      160       64,215        1,680       2.34  08-09-2026 14:30:00
+00010   0.500138        1,031      165       64,215        1,792       2.11  08-09-2026 14:30:00
+00011   0.550187        1,211      180       64,215        2,023       2.40  08-09-2026 14:30:00
+00012   0.600257        1,389      178       64,215        2,268       2.43  08-09-2026 14:30:00
+00013   0.650129        1,536      147       64,215        2,527       1.98  08-09-2026 14:30:00
+00014   0.700253        1,671      135       64,215        2,660       1.69  08-09-2026 14:30:00
+00015   0.750330        1,797      126       64,215        2,800       1.60  08-09-2026 14:30:00
+
+[Simulation finished  08-09-2026 14:30:00]
+Particles of simulation (initial): 64,215
+DTs adjusted to DtMin............: 0
+Excluded particles...............: 0
+Total Runtime....................: 1.522606 sec.
+Simulation Runtime...............: 1.244217 sec.
+Runtime per physical second......: 1.658226 sec.
+Steps per second.................: 1444.281738
+Steps of simulation..............: 1,797
+PART files.......................: 16
+Maximum number of particles......: 64,215
+Maximum number of cells..........: 2,800
+CPU Memory.......................: 5,836,950 (5.57 MiB)
+GPU Memory.......................: 12,316,648 (11.75 MiB)
+GPU Memory (for cells)...........: 1,946,600 (1.86 MiB)
+ 
+[GPU Timers]
+VA-Init..........................: 0.278627 sec.
+NL-Limits........................: 0.083747 sec.
+NL-PreSort.......................: 0.007625 sec.
+NL-RadixSort.....................: 0.192357 sec.
+NL-CellBegin.....................: 0.063184 sec.
+NL-SortData......................: 0.110644 sec.
+NL-OutCheck......................: 0 sec.
+CF-PreForces.....................: 0.097652 sec.
+CF-PreMDBC.......................: 0 sec.
+CF-Forces........................: 0.577573 sec.
+SU-Shifting......................: 0 sec.
+SU-ComputeStep...................: 0.043627 sec.
+SU-Floating......................: 0 sec.
+SU-Motion........................: 0.021494 sec.
+SU-Periodic......................: 0 sec.
+SU-ResizeNp......................: 0 sec.
+SU-DownData......................: 0.011254 sec.
+SU-SavePart......................: 0.030354 sec.
+SU-Chrono........................: 0 sec.
+SU-Moorings......................: 0 sec.
+SU-InOut.........................: 0 sec.
+SU-Gauges........................: 0 sec.
+SU-FlexStruc.....................: 0 sec.
+ 
+[Output files]
+- CfgInit_Domain.vtk.....: Saves the limits of the case and the simulation domain limits.
+- CfgInit_MapCells.vtk...: Saves the cell division of the simulation domain.
+- Run.csv................: One line CSV file with execution parameters and other simulation data.
+- Run.out................: Log file of the simulation.
+- RunPARTs.csv...........: Saves extra information of simulated PARTs.
+- data/PartInfo.ibi4.....: Binary file with execution information for each instant (input for PartInfo program).
+- data/PartMotionRef.ibi4: Main binary file with motion reference data of moving and floating objects during simulation.
+- data/PartOut_???.obi4..: Binary file with particles excluded during simulation (input for PartVtkOut program).
+- data/Part_????.bi4.....: Binary file with particle data in different instants.
+- data/Part_Head.ibi4....: Binary file with basic information of simulation data.
+ 
+[WARNINGS]
+1. The XML option 'PartsOutMax' is deprecated. Use 'MinFluidStop' option.
+2. The kernel Cubic Spline is not available in GaugeSystem, so kernel Wendland is used.
+ 
+[References]
+- Official solver reference DualSPHysics v5.0: J.M. Dominguez, G. Fourtakas,
+    C. Altomare, R.B. Canelas, A. Tafuni, O. Garcia-Feal, I. Martinez-Estevez,
+    A. Mokos, R. Vacondio, A.J.C. Crespo, B.D. Rogers, P.K. Stansby, M. Gomez-Gesteira.
+    2022. DualSPHysics: from fluid dynamics to multiphysics problems.
+    Computational Particle Mechanics, 9:867-895. doi: https://doi.org/10.1007/s40571-021-00404-2
+
+- Optimised CPU multi-core and GPU implementation (Dominguez et al., 2013  https://doi.org/10.1016/j.cpc.2012.10.015)
+- Dynamic boundary conditions (Crespo et al., 2007  https://doi.org/10.3970/cmc.2007.005.173)
+- Density diffusion Term: Fourtakas (Fourtakas et al., 2019  https://doi.org/10.1016/j.compfluid.2019.06.009)
+- Viscosity: Artificial (Monaghan, 1992  https://doi.org/10.1146/annurev.aa.30.090192.002551)
+- Kernel: Cubic Spline (Monaghan, 1992  https://doi.org/10.1146/annurev.aa.30.090192.002551)
+- Time integration scheme: Verlet (Verlet, 1967  https://doi.org/10.1103/PhysRev.159.98)
+
+Finished execution (code=0).
+

@@ -1,0 +1,46 @@
+{
+  "case_name": "HADR_TerrainChouldari",
+
+  "terrain_npz": "data/terrain/chouldari/chouldari_sph_terrain.npz",
+  "terrain_stl": "data/terrain/chouldari/chouldari_sph_terrain.stl",
+  "terrain_output_subdir": "terrain",
+
+  "definition_name": "HADR_TerrainChouldari_Def.xml",
+  "runner_definition_name": "HADR_TerrainChouldari_runner_Def.xml",
+  "summary_name": "terrain_case_summary.json",
+
+  "particle_spacing": 0.10,
+  "simulation_time": 0.75,
+  "time_out": 0.05,
+
+  "reservoir_water_depth": 0.50,
+  "reservoir_length": 3.0,
+  "reservoir_width": 3.0,
+  "reservoir_offset_from_dam": 3.0,
+  "reservoir_base_clearance": 0.02,
+
+  "upstream_search_radius": 8.0,
+  "upstream_inner_radius": 1.0,
+  "force_upstream_axis": null,
+  "force_upstream_sign": null,
+  "fallback_upstream_x": 1.0,
+  "fallback_upstream_y": 0.0,
+  "fallback_dam_x_sim": 9.6898,
+  "fallback_dam_y_sim": 9.8289,
+
+  "test_dam_wall": true,
+  "test_dam_wall_thickness": 0.30,
+  "test_dam_wall_side_margin": 0.50,
+  "test_dam_wall_base_clearance": 0.20,
+  "test_dam_wall_top_clearance": 0.20,
+
+  "breach_enabled": true,
+  "breach_time": 0.25,
+  "breach_lift_duration": 0.10,
+  "breach_lift_distance": 3.0,
+  "breach_motion_steps": 50,
+
+  "domain_margin_xy": 1.0,
+  "domain_margin_z_bottom": 0.5,
+  "domain_margin_z_top": 1.0
+}

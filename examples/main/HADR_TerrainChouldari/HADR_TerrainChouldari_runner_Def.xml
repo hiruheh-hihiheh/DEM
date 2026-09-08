@@ -1,0 +1,258 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<case>
+
+    <casedef>
+
+        <constantsdef>
+
+            <gravity
+                x="0"
+                y="0"
+                z="-9.81"
+                comment="Gravitational acceleration"
+                units_comment="m/s^2" />
+
+            <rhop0
+                value="1000"
+                comment="Reference density of the fluid"
+                units_comment="kg/m^3" />
+
+            <rhopgradient value="2" />
+
+            <hswl
+                value="0"
+                auto="true" />
+
+            <gamma value="7" />
+
+            <speedsystem
+                value="0"
+                auto="true" />
+
+            <coefsound value="20" />
+
+            <speedsound
+                value="0"
+                auto="true" />
+
+            <coefh value="1.0" />
+
+            <_hdp value="2" />
+
+            <cflnumber value="0.2" />
+
+        </constantsdef>
+
+        <mkconfig
+            boundcount="240"
+            fluidcount="9" />
+
+        <geometry>
+
+            <definition
+                dp="0.100000"
+                units_comment="simulation metres (scaled prototype units)">
+
+                <pointmin
+                    x="-1.000000"
+                    y="-1.000000"
+                    z="-0.484366" />
+
+                <pointmax
+                    x="28.256620"
+                    y="24.953268"
+                    z="7.382564" />
+
+            </definition>
+
+            <commands>
+
+                <mainlist>
+
+                    <setshapemode>
+                        dp | bound
+                    </setshapemode>
+
+                    <setdrawmode mode="full" />
+
+                    <!-- Experimental DEM terrain surface -->
+                    <!-- Source: Copernicus GLO-30 DSM -->
+                    <!-- Coordinates are already numerically scaled -->
+                    <!-- Terrain is fixed; experimental breach gate is moving -->
+
+                    <setmkbound mk="0" />
+
+                    <drawfilestl file="E:/sih/Hydro_twin/examples/main/HADR_TerrainChouldari/chouldari_sph_terrain.stl" />
+
+                    <!-- Experimental moving breach gate -->
+                    <!-- Prototype timing only; not observed Chouldari failure data -->
+
+                    <setmkbound mk="200" />
+
+                    <drawbox>
+
+                        <boxfill>
+                            solid
+                        </boxfill>
+
+                        <point
+                            x="7.689809"
+                            y="9.678936"
+                            z="0.015634" />
+
+                        <size
+                            x="4.000000"
+                            y="0.300000"
+                            z="2.366930" />
+
+                    </drawbox>
+
+                    <!-- Simple preliminary reservoir volume -->
+
+                    <setmkfluid mk="0" />
+
+                    <drawbox>
+
+                        <boxfill>
+                            solid
+                        </boxfill>
+
+                        <point
+                            x="8.189809"
+                            y="11.328936"
+                            z="1.682564" />
+
+                        <size
+                            x="3.000000"
+                            y="3.000000"
+                            z="0.500000" />
+
+                    </drawbox>
+
+                </mainlist>
+
+            </commands>
+
+        </geometry>
+
+        <motion>
+            <objreal ref="200">
+                <begin mov="1" start="0"/>
+                <mvfile id="1" duration="0.75000000">
+                    <file name="E:/sih/Hydro_twin/examples/main/HADR_TerrainChouldari/HADR_TerrainChouldari_gate_motion.txt" fields="4" fieldtime="0" fieldx="1" fieldy="2" fieldz="3"/>
+                </mvfile>
+            </objreal>
+        </motion>
+    </casedef>
+
+    <execution>
+
+        <parameters>
+
+            <parameter
+                key="SavePosDouble"
+                value="0" />
+
+            <parameter
+                key="StepAlgorithm"
+                value="1" />
+
+            <parameter
+                key="VerletSteps"
+                value="40" />
+
+            <parameter
+                key="Kernel"
+                value="1" />
+
+            <parameter
+                key="ViscoTreatment"
+                value="1" />
+
+            <parameter
+                key="Visco"
+                value="0.1" />
+
+            <parameter
+                key="ViscoBoundFactor"
+                value="1" />
+
+            <parameter
+                key="DensityDT"
+                value="2" />
+
+            <parameter
+                key="DensityDTvalue"
+                value="0.1" />
+
+            <parameter
+                key="Shifting"
+                value="0" />
+
+            <parameter
+                key="RigidAlgorithm"
+                value="1" />
+
+            <parameter
+                key="CoefDtMin"
+                value="0.05" />
+
+            <parameter
+                key="DtIni"
+                value="0" />
+
+            <parameter
+                key="DtMin"
+                value="0" />
+
+            <parameter
+                key="DtFixed"
+                value="0" />
+
+            <parameter
+                key="DtFixedFile"
+                value="NONE" />
+
+            <parameter
+                key="DtAllParticles"
+                value="0" />
+
+            <parameter
+                key="TimeMax"
+                value="0.750000" />
+
+            <parameter
+                key="TimeOut"
+                value="0.050000" />
+
+            <parameter
+                key="PartsOutMax"
+                value="1" />
+
+            <parameter
+                key="RhopOutMin"
+                value="700" />
+
+            <parameter
+                key="RhopOutMax"
+                value="1300" />
+
+            <simulationdomain>
+
+                <posmin
+                    x="default"
+                    y="default"
+                    z="default" />
+
+                <posmax
+                    x="default"
+                    y="default"
+                    z="7.382564" />
+
+            </simulationdomain>
+
+        </parameters>
+
+    </execution>
+
+</case>

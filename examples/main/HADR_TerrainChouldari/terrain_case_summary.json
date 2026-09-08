@@ -1,0 +1,156 @@
+{
+  "case_name": "HADR_TerrainChouldari",
+  "status": "experimental_integration_test",
+  "limitations": [
+    "Terrain source is Copernicus GLO-30 DSM data.",
+    "Terrain coordinates are numerically scaled prototype coordinates.",
+    "This is not a validated physical flood model.",
+    "Hydrological calibration is still required.",
+    "The terrain STL is a surface only; it has no artificial box, bottom, or side walls.",
+    "The temporary test dam wall is only an experimental containment feature.",
+    "Final SIH modelling will combine terrain, hydrological observations, satellite data, SPH/Delft3D comparison, and GIS outputs.",
+    "breach_time, breach_lift_duration and breach_lift_distance are prototype assumptions, not observed Chouldari failure parameters."
+  ],
+  "inputs": {
+    "terrain_npz": "E:\\sih\\Hydro_twin\\data\\terrain\\chouldari\\chouldari_sph_terrain.npz",
+    "terrain_stl_source": "E:\\sih\\Hydro_twin\\data\\terrain\\chouldari\\chouldari_sph_terrain.stl",
+    "terrain_stl_copy": "E:\\sih\\Hydro_twin\\examples\\main\\HADR_TerrainChouldari\\chouldari_sph_terrain.stl"
+  },
+  "simulation": {
+    "particle_spacing": 0.1,
+    "simulation_time": 0.75,
+    "time_out": 0.05
+  },
+  "bounds": {
+    "terrain_stl": {
+      "x0": 0.0,
+      "x1": 27.25661998,
+      "y0": 0.0,
+      "y1": 23.95326771,
+      "z0": 0.03241865,
+      "z1": 2.02550232
+    },
+    "pointmin": [
+      -1.0,
+      -1.0,
+      -0.4843662643432617
+    ],
+    "pointmax": [
+      28.256619982566917,
+      24.953267714884134,
+      7.382563934326172
+    ],
+    "reservoir": {
+      "x0": 8.189809291710844,
+      "x1": 11.189809291710844,
+      "y0": 11.328936273269356,
+      "y1": 14.328936273269356,
+      "base_z": 1.682563934326172,
+      "top_z": 2.182563934326172
+    },
+    "wall": {
+      "x0": 7.689809291710844,
+      "x1": 11.689809291710844,
+      "y0": 9.678936273269356,
+      "y1": 9.978936273269357,
+      "base_z": 0.015633735656738285,
+      "top_z": 2.382563934326172
+    }
+  },
+  "reservoir_vertical_gap": {
+    "reservoir_base_z": 1.682563934326172,
+    "local_terrain_points": 25,
+    "local_terrain_min": 0.22741104125976563,
+    "local_terrain_mean": 1.1118712203979493,
+    "local_terrain_max": 1.662563934326172,
+    "gap_above_local_min": 1.4551528930664064,
+    "gap_above_local_mean": 0.5706927139282227,
+    "gap_above_local_max": 0.020000000000000018,
+    "note": "Integration-test reservoir base is set above local terrain maximum. This is not the final hydraulic water-surface definition."
+  },
+  "breach": {
+    "enabled": true,
+    "breach_time": 0.25,
+    "lift_duration": 0.1,
+    "lift_distance": 3.0,
+    "motion_steps": 50,
+    "gate_mk": 200,
+    "gate_initial_x": 7.689809291710844,
+    "gate_initial_y": 9.678936273269356,
+    "gate_initial_z": 0.015633735656738285,
+    "gate_final_z": 3.0156337356567384,
+    "gate_final_top_z": 5.382563934326172,
+    "motion_file": "E:\\sih\\Hydro_twin\\examples\\main\\HADR_TerrainChouldari\\HADR_TerrainChouldari_gate_motion.txt",
+    "motion_duration": 0.75,
+    "note": "Prototype breach assumptions only. These are not observed Chouldari failure parameters."
+  },
+  "geometry": {
+    "scale": 0.02,
+    "terrain_samples": 1309,
+    "terrain_x_min": 0.0,
+    "terrain_x_max": 27.256619982566917,
+    "terrain_y_min": 0.0,
+    "terrain_y_max": 23.953267714884134,
+    "terrain_z_min": 0.032418646812438966,
+    "terrain_z_max": 2.0255023193359376,
+    "dam_x": 9.689809291710844,
+    "dam_y": 9.828936273269356,
+    "dam_z": 0.5223002624511719,
+    "dam_nearest_distance": 0.00015647509138601727,
+    "dam_coordinate_source": "npz_dam_x_m_y_m_times_scale",
+    "upstream_x": -0.7071067811865475,
+    "upstream_y": 0.7071067811865476,
+    "upstream_axis": "y",
+    "upstream_sign": 1.0,
+    "upstream_method": "sector-mean-elevation",
+    "upstream_points": 178,
+    "upstream_mean_elevation": 1.1324588447742248,
+    "reservoir_center_x": 9.689809291710844,
+    "reservoir_center_y": 12.828936273269356,
+    "reservoir_x0": 8.189809291710844,
+    "reservoir_x1": 11.189809291710844,
+    "reservoir_y0": 11.328936273269356,
+    "reservoir_y1": 14.328936273269356,
+    "reservoir_length": 3.0,
+    "reservoir_width": 3.0,
+    "reservoir_depth": 0.5,
+    "reservoir_base_z": 1.682563934326172,
+    "reservoir_top_z": 2.182563934326172,
+    "reservoir_terrain_points": 25,
+    "reservoir_terrain_min_z": 0.22741104125976563,
+    "reservoir_terrain_max_z": 1.662563934326172,
+    "reservoir_terrain_mean_z": 1.1118712203979493,
+    "wall_enabled": true,
+    "wall_thickness": 0.3,
+    "wall_side_margin": 0.5,
+    "wall_x0": 7.689809291710844,
+    "wall_x1": 11.689809291710844,
+    "wall_y0": 9.678936273269356,
+    "wall_y1": 9.978936273269357,
+    "wall_base_z": 0.015633735656738285,
+    "wall_top_z": 2.382563934326172,
+    "pointmin_x": -1.0,
+    "pointmin_y": -1.0,
+    "pointmin_z": -0.4843662643432617,
+    "pointmax_x": 28.256619982566917,
+    "pointmax_y": 24.953267714884134,
+    "pointmax_z": 7.382563934326172
+  },
+  "validation": {
+    "status": "pass",
+    "checks_passed": 110,
+    "errors": [],
+    "dualsphysics_run_attempted": false,
+    "terrain_stl_bounds_source": "ascii_stl_parsed",
+    "breach_validation": {
+      "status": "pass",
+      "checks_passed": 42,
+      "errors": []
+    }
+  },
+  "outputs": {
+    "definition_xml": "E:\\sih\\Hydro_twin\\examples\\main\\HADR_TerrainChouldari\\HADR_TerrainChouldari_Def.xml",
+    "runner_definition_xml": "E:\\sih\\Hydro_twin\\examples\\main\\HADR_TerrainChouldari\\HADR_TerrainChouldari_runner_Def.xml",
+    "summary_json": "E:\\sih\\Hydro_twin\\examples\\main\\HADR_TerrainChouldari\\terrain_case_summary.json"
+  }
+}
