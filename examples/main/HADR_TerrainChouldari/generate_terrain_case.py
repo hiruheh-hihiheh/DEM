@@ -1,25 +1,31 @@
 """
-Generate the experimental HADR_TerrainChouldari DualSPHysics case.
+Generate the experimental HADR_TerrainChouldari terrain breach case.
 
-This script creates a new terrain-based DualSPHysics case from the
-intermediate DEM-derived terrain representation.
+This redesigned generator builds the dam/reservoir/breach geometry from the
+DEM-derived terrain points instead of using an arbitrary rectangular wall and
+detached reservoir box.
 
-It does NOT:
-- generate SPH particles directly
+Design intent:
+
+- The real DEM terrain STL remains unchanged.
+- The dam centerline is placed approximately perpendicular to the estimated
+  upstream/downstream direction.
+- The dam span is estimated from local terrain around the dam point.
+- The dam wall is segmented and vertically anchored to local terrain.
+- The dam crest is ONE common horizontal elevation.
+- The reservoir is segmented and placed immediately upstream of the dam face.
+- The reservoir has ONE common horizontal water-surface elevation.
+- The breach is centered on the dam centerline.
+- Fixed dam segments remain on both sides of the breach.
+- Only the centered breach segment is a moving gate.
+
+This script does NOT:
 - run GenCase
 - run DualSPHysics
-- modify the existing synthetic dam-break case
-- modify backend scenario behavior
-- modify the frontend
+- modify the existing synthetic HADR_DamBreak case
+- modify backend runner behavior
+- modify frontend behavior
 - modify Delft3D integration
-
-IMPORTANT LIMITATIONS:
-- Terrain source is Copernicus GLO-30 DSM data.
-- Terrain coordinates are already numerically scaled by the prototype scale.
-- This is an integration test, not a validated physical flood model.
-- Hydrological calibration is still required.
-- The final SIH model will later incorporate hydrological data, satellite data,
-  SPH/Delft3D comparison, and GIS outputs.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ import json
 import math
 import shutil
 import xml.etree.ElementTree as ET
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
@@ -39,6 +45,8 @@ CASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CASE_DIR.parents[2]
 DEFAULT_CONFIG_PATH = CASE_DIR / "terrain_case_config.json"
 
+TERRAIN_MK = 0
+FIXED_WALL_MK = 1
 BREACH_GATE_MK = 200
 MOTION_EPS = 1e-6
 
@@ -48,63 +56,73 @@ class TerrainCaseError(Exception):
 
 
 @dataclass
-class TerrainCaseGeometry:
-    scale: float
-    terrain_samples: int
+class WallBox:
+    x0: float
+    x1: float
+    y0: float
+    y1: float
+    z0: float
+    z1: float
+    ground_z: float
+    cell_terrain_max: float | None
+    kind: str
 
-    terrain_x_min: float
-    terrain_x_max: float
-    terrain_y_min: float
-    terrain_y_max: float
-    terrain_z_min: float
-    terrain_z_max: float
 
-    dam_x: float
-    dam_y: float
-    dam_z: float
-    dam_nearest_distance: float
-    dam_coordinate_source: str
+@dataclass
+class FluidBox:
+    x0: float
+    x1: float
+    y0: float
+    y1: float
+    z0: float
+    z1: float
+    ground_z: float
+    cell_terrain_max: float | None
+    water_surface_z: float
+    water_depth: float
 
-    upstream_x: float
-    upstream_y: float
-    upstream_axis: str
+
+@dataclass
+class DamGeometry:
+    flow_axis: str
     upstream_sign: float
     upstream_method: str
-    upstream_points: int
-    upstream_mean_elevation: float | None
+    center_x: float
+    center_y: float
+    center_z: float
+    span_start: float
+    span_end: float
+    endpoints: list[list[float]]
+    thickness: float
+    crest_z: float | None
+    wall_bottom_min: float | None
+    wall_bottom_max: float | None
+    local_terrain_min: float | None
+    local_terrain_max: float | None
+    fixed_boxes: list[WallBox] = field(default_factory=list)
+    breach_box: WallBox | None = None
+    breach_center: float | None = None
+    breach_width: float | None = None
+    fixed_left_width: float | None = None
+    fixed_right_width: float | None = None
+    gate_initial_z: float | None = None
+    gate_final_z: float | None = None
+    gate_top_final_z: float | None = None
+    gate_lift_distance: float | None = None
 
-    reservoir_center_x: float
-    reservoir_center_y: float
-    reservoir_x0: float
-    reservoir_x1: float
-    reservoir_y0: float
-    reservoir_y1: float
-    reservoir_length: float
-    reservoir_width: float
-    reservoir_depth: float
-    reservoir_base_z: float
-    reservoir_top_z: float
-    reservoir_terrain_points: int
-    reservoir_terrain_min_z: float | None
-    reservoir_terrain_max_z: float | None
-    reservoir_terrain_mean_z: float | None
 
-    wall_enabled: bool
-    wall_thickness: float | None
-    wall_side_margin: float | None
-    wall_x0: float | None
-    wall_x1: float | None
-    wall_y0: float | None
-    wall_y1: float | None
-    wall_base_z: float | None
-    wall_top_z: float | None
-
-    pointmin_x: float
-    pointmin_y: float
-    pointmin_z: float
-    pointmax_x: float
-    pointmax_y: float
-    pointmax_z: float
+@dataclass
+class ReservoirGeometry:
+    boxes: list[FluidBox] = field(default_factory=list)
+    x_min: float | None = None
+    x_max: float | None = None
+    y_min: float | None = None
+    y_max: float | None = None
+    z_min: float | None = None
+    z_max: float | None = None
+    water_surface_z: float | None = None
+    water_depth_min: float | None = None
+    water_depth_max: float | None = None
 
 
 def _resolve_path(raw_path: str | Path) -> Path:
@@ -114,8 +132,11 @@ def _resolve_path(raw_path: str | Path) -> Path:
     return REPO_ROOT / path
 
 
-def _positive(cfg: dict, key: str) -> float:
-    value = float(cfg[key])
+def _positive(cfg: dict, key: str, default: float | None = None) -> float:
+    value = cfg.get(key, default)
+    if value is None:
+        raise TerrainCaseError(f"Config value '{key}' is required")
+    value = float(value)
     if not math.isfinite(value) or value <= 0.0:
         raise TerrainCaseError(f"Config value '{key}' must be positive: {value}")
     return value
@@ -137,153 +158,46 @@ def _f(value: float) -> str:
 def _fmt(value: float | None) -> str:
     if value is None:
         return "None"
-
     try:
         numeric = float(value)
     except (TypeError, ValueError):
         return str(value)
-
     if not math.isfinite(numeric):
         return str(value)
-
     return f"{numeric:.6f}"
 
 
 def _npz_scalar(data: np.lib.npyio.NpzFile, key: str) -> float | None:
     if key not in data:
         return None
-
     arr = np.asarray(data[key]).ravel()
     if arr.size == 0:
         return None
-
     try:
         value = float(arr[0])
     except (TypeError, ValueError):
         return None
-
     if math.isfinite(value):
         return value
-
     return None
-
-
-def _nearest_z(
-    x: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
-    target_x: float,
-    target_y: float,
-) -> tuple[float, float]:
-    distances_sq = (x - target_x) ** 2 + (y - target_y) ** 2
-    idx = int(np.argmin(distances_sq))
-    return float(z[idx]), float(math.sqrt(distances_sq[idx]))
-
-
-def _box_stats(
-    x: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
-    x0: float,
-    x1: float,
-    y0: float,
-    y1: float,
-) -> dict | None:
-    mask = (x >= x0) & (x <= x1) & (y >= y0) & (y <= y1)
-    count = int(mask.sum())
-
-    if count == 0:
-        return None
-
-    values = z[mask]
-
-    return {
-        "count": count,
-        "min": float(np.min(values)),
-        "max": float(np.max(values)),
-        "mean": float(np.mean(values)),
-    }
-
-
-def _parse_ascii_stl_bounds(path: Path) -> dict | None:
-    """
-    Lightweight ASCII STL bounds reader.
-    """
-
-    try:
-        text = path.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return None
-
-    min_x = math.inf
-    min_y = math.inf
-    min_z = math.inf
-    max_x = -math.inf
-    max_y = -math.inf
-    max_z = -math.inf
-
-    found = False
-
-    for line in text.splitlines():
-        stripped = line.strip()
-
-        if not stripped.startswith("vertex"):
-            continue
-
-        parts = stripped.split()
-        if len(parts) < 4:
-            continue
-
-        try:
-            vx = float(parts[1])
-            vy = float(parts[2])
-            vz = float(parts[3])
-        except ValueError:
-            continue
-
-        found = True
-
-        min_x = min(min_x, vx)
-        min_y = min(min_y, vy)
-        min_z = min(min_z, vz)
-
-        max_x = max(max_x, vx)
-        max_y = max(max_y, vy)
-        max_z = max(max_z, vz)
-
-    if not found:
-        return None
-
-    return {
-        "x0": float(min_x),
-        "x1": float(max_x),
-        "y0": float(min_y),
-        "y1": float(max_y),
-        "z0": float(min_z),
-        "z1": float(max_z),
-    }
 
 
 def _load_terrain(cfg: dict) -> dict:
     npz_path = _resolve_path(cfg["terrain_npz"])
-
     if not npz_path.exists():
         raise TerrainCaseError(f"Terrain NPZ not found: {npz_path}")
 
     with np.load(npz_path, allow_pickle=False) as data:
         required = ("x_sim", "y_sim", "z_sim", "scale")
         missing = [key for key in required if key not in data]
-
         if missing:
             raise TerrainCaseError(
                 f"Terrain NPZ is missing required arrays: {', '.join(missing)}"
             )
-
         x = np.asarray(data["x_sim"], dtype=float).ravel()
         y = np.asarray(data["y_sim"], dtype=float).ravel()
         z = np.asarray(data["z_sim"], dtype=float).ravel()
         scale = float(np.asarray(data["scale"]).ravel()[0])
-
         dam_x_m = _npz_scalar(data, "dam_x_m")
         dam_y_m = _npz_scalar(data, "dam_y_m")
 
@@ -310,7 +224,7 @@ def _load_terrain(cfg: dict) -> dict:
         dam_y = float(cfg.get("fallback_dam_y_sim", 9.8289))
         dam_coordinate_source = "config_fallback"
 
-    dam_z, dam_nearest_distance = _nearest_z(x, y, z, dam_x, dam_y)
+    dam_z = float(z[np.argmin((x - dam_x) ** 2 + (y - dam_y) ** 2)])
 
     return {
         "npz_path": npz_path,
@@ -321,151 +235,409 @@ def _load_terrain(cfg: dict) -> dict:
         "dam_x": dam_x,
         "dam_y": dam_y,
         "dam_z": dam_z,
-        "dam_nearest_distance": dam_nearest_distance,
         "dam_coordinate_source": dam_coordinate_source,
     }
 
 
-def _estimate_upstream_direction(
+def _estimate_upstream_axis(
     x: np.ndarray,
     y: np.ndarray,
     z: np.ndarray,
     dam_x: float,
     dam_y: float,
     radius: float,
-    inner_radius: float,
-    default_direction: tuple[float, float],
-) -> tuple[tuple[float, float], str, int, float | None]:
-    norm = math.hypot(default_direction[0], default_direction[1])
-    if norm <= 0.0:
-        default_direction = (1.0, 0.0)
-    else:
-        default_direction = (
-            default_direction[0] / norm,
-            default_direction[1] / norm,
-        )
-
+) -> tuple[str, float, str]:
     dx = x - dam_x
     dy = y - dam_y
     dist = np.hypot(dx, dy)
 
-    base = (dist > inner_radius) & (dist <= radius)
-
-    if not np.any(base):
-        return default_direction, "fallback-no-local-terrain", 0, None
-
-    directions = [
-        (math.cos(i * math.pi / 4.0), math.sin(i * math.pi / 4.0))
-        for i in range(8)
+    candidates = [
+        ("x", 1.0, dx),
+        ("x", -1.0, -dx),
+        ("y", 1.0, dy),
+        ("y", -1.0, -dy),
     ]
 
-    best_dir = default_direction
-    best_score: float | None = None
-    best_count = 0
-    method = "sector-mean-elevation"
+    best_axis = "x"
+    best_sign = 1.0
+    best_score = -math.inf
+    best_method = "fallback-default"
 
-    for ux, uy in directions:
-        projection = dx * ux + dy * uy
-        selected = base & (projection >= 0.5 * dist)
-        count = int(selected.sum())
-
-        if count >= 3:
-            score = float(np.mean(z[selected]))
-            if best_score is None or score > best_score:
-                best_score = score
-                best_dir = (ux, uy)
-                best_count = count
-
-    if best_count > 0:
-        return best_dir, method, best_count, best_score
-
-    best_score = None
-    best_count = 0
-    method = "weighted-mean-elevation"
-
-    for ux, uy in directions:
-        projection = dx * ux + dy * uy
-        weights = np.where(
-            base,
-            np.maximum(projection / np.maximum(dist, 1e-9), 0.0),
-            0.0,
+    for axis, sign, projection in candidates:
+        mask = (
+            (dist <= radius)
+            & (dist > 0.25 * radius)
+            & (projection > 0.25 * dist)
         )
-        weight_sum = float(np.sum(weights))
+        count = int(mask.sum())
+        if count < 3:
+            continue
+        score = float(np.mean(z[mask]))
+        if score > best_score:
+            best_score = score
+            best_axis = axis
+            best_sign = sign
+            best_method = "local-upstream-elevation-heuristic"
 
-        if weight_sum > 1e-9:
-            score = float(np.sum(weights * z) / weight_sum)
-            count = int(np.sum(weights > 0.0))
-
-            if best_score is None or score > best_score:
-                best_score = score
-                best_dir = (ux, uy)
-                best_count = count
-
-    if best_count > 0:
-        return best_dir, method, best_count, best_score
-
-    return default_direction, "fallback-default-direction", 0, None
+    return best_axis, best_sign, best_method
 
 
-def _reservoir_footprint(
+def _cell_stats(
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    x0: float,
+    x1: float,
+    y0: float,
+    y1: float,
+) -> dict | None:
+    mask = (
+        (x >= min(x0, x1))
+        & (x <= max(x0, x1))
+        & (y >= min(y0, y1))
+        & (y <= max(y0, y1))
+        & np.isfinite(z)
+    )
+    if not np.any(mask):
+        return None
+    values = z[mask]
+    return {
+        "count": int(values.size),
+        "min": float(np.min(values)),
+        "max": float(np.max(values)),
+        "median": float(np.median(values)),
+    }
+
+
+def _estimate_dam_span(
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
     dam_x: float,
     dam_y: float,
-    axis: str,
-    sign: float,
-    offset: float,
-    length: float,
-    width: float,
-    terrain_bounds: tuple[float, float, float, float],
-    edge_margin: float,
-) -> tuple[float, float, float, float, float, float]:
-    if axis == "x":
-        center_x = dam_x + sign * offset
-        center_y = dam_y
-        half_x = length / 2.0
-        half_y = width / 2.0
+    flow_axis: str,
+    cfg: dict,
+    particle_spacing: float,
+) -> tuple[float, float]:
+    search_radius = float(cfg.get("dam_search_radius", 8.0))
+    min_span = float(cfg.get("dam_min_span", 2.0))
+    max_span = float(cfg.get("dam_max_span", 12.0))
+    valley_threshold = float(cfg.get("dam_valley_threshold", 0.30))
+
+    dist = np.hypot(x - dam_x, y - dam_y)
+    local = dist <= search_radius
+
+    if flow_axis == "x":
+        s = y[local] - dam_y
     else:
-        center_x = dam_x
-        center_y = dam_y + sign * offset
-        half_x = width / 2.0
-        half_y = length / 2.0
+        s = x[local] - dam_x
 
-    min_x, max_x, min_y, max_y = terrain_bounds
+    zs = z[local]
+    finite = np.isfinite(s) & np.isfinite(zs)
+    s = s[finite]
+    zs = zs[finite]
 
-    allowed_min_x = min_x + edge_margin
-    allowed_max_x = max_x - edge_margin
-    allowed_min_y = min_y + edge_margin
-    allowed_max_y = max_y - edge_margin
+    if s.size < 20:
+        half = max(min_span / 2.0, 3.0 * particle_spacing)
+        return -half, half
 
-    if allowed_max_x > allowed_min_x:
-        span_x = 2.0 * half_x
-        allowed_span_x = allowed_max_x - allowed_min_x
+    p5, p95 = np.percentile(s, [5.0, 95.0])
+    data_span = float(p95 - p5)
 
-        if span_x >= allowed_span_x:
-            center_x = (allowed_min_x + allowed_max_x) / 2.0
+    if data_span < min_span:
+        half = min_span / 2.0
+        return -half, half
+
+    bin_size = max(particle_spacing, data_span / 40.0)
+    edges = np.arange(p5, p95 + bin_size, bin_size)
+
+    if len(edges) < 3:
+        half = max(min_span / 2.0, data_span / 2.0)
+        return -half, half
+
+    idx = np.digitize(s, edges) - 1
+    valid = (idx >= 0) & (idx < len(edges) - 1)
+    idx = idx[valid]
+    zs_bin = zs[valid]
+
+    bin_min = np.full(len(edges) - 1, np.nan)
+    for b in range(len(edges) - 1):
+        values = zs_bin[idx == b]
+        if values.size > 0:
+            bin_min[b] = float(np.min(values))
+
+    valid_bins = ~np.isnan(bin_min)
+    if not np.any(valid_bins):
+        half = max(min_span / 2.0, data_span / 2.0)
+        return -half, half
+
+    valley_floor = float(np.nanmin(bin_min))
+    relief = float(np.nanmax(bin_min)) - valley_floor
+    cutoff = valley_floor + max(valley_threshold, 0.25 * relief)
+    low = valid_bins & (bin_min <= cutoff)
+
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    center_bin = int(np.argmin(np.abs(centers)))
+
+    if low[center_bin]:
+        start = center_bin
+        end = center_bin
+        while start > 0 and low[start - 1]:
+            start -= 1
+        while end < len(low) - 1 and low[end + 1]:
+            end += 1
+    else:
+        low_indices = np.where(low)[0]
+        if low_indices.size == 0:
+            half = max(min_span / 2.0, data_span / 2.0)
+            return -half, half
+        nearest = int(low_indices[np.argmin(np.abs(centers[low_indices]))])
+        start = nearest
+        end = nearest
+        while start > 0 and low[start - 1]:
+            start -= 1
+        while end < len(low) - 1 and low[end + 1]:
+            end += 1
+        if start > center_bin:
+            start = center_bin
+        if end < center_bin:
+            end = center_bin
+
+    s_min = float(edges[start])
+    s_max = float(edges[end + 1])
+
+    if s_min > 0.0:
+        s_min = min(0.0, s_min)
+    if s_max < 0.0:
+        s_max = max(0.0, s_max)
+
+    width = s_max - s_min
+    if width < min_span:
+        s_min = -min_span / 2.0
+        s_max = min_span / 2.0
+        width = min_span
+    if width > max_span:
+        s_min = -max_span / 2.0
+        s_max = max_span / 2.0
+
+    return float(s_min), float(s_max)
+
+
+def _split_interval(
+    start: float,
+    end: float,
+    target_length: float,
+    max_segments: int = 50,
+) -> list[tuple[float, float]]:
+    width = end - start
+    if width <= 0.0:
+        return []
+    n = max(1, int(round(width / max(target_length, 1e-6))))
+    n = min(n, max_segments)
+    edges = np.linspace(start, end, n + 1)
+    return [(float(edges[i]), float(edges[i + 1])) for i in range(n)]
+
+
+def _make_wall_boxes(
+    flow_axis: str,
+    dam_x: float,
+    dam_y: float,
+    thickness: float,
+    interval_start: float,
+    interval_end: float,
+    segment_length: float,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    embedment: float,
+    common_crest_z: float,
+    default_ground_z: float,
+    kind: str,
+) -> list[WallBox]:
+    """
+    Build terrain-anchored wall segments with a COMMON crest elevation.
+
+    z0 = local terrain elevation - embedment  (terrain-anchored bottom)
+    z1 = common_crest_z                       (same for ALL segments)
+
+    NO fallback is applied. If z1 <= z0 for any segment, validation will fail.
+    """
+    boxes: list[WallBox] = []
+    intervals = _split_interval(interval_start, interval_end, segment_length)
+    if not intervals:
+        return boxes
+
+    expand = max(0.05, 0.25 * thickness)
+
+    for s0, s1 in intervals:
+        if flow_axis == "x":
+            x0 = dam_x - thickness / 2.0
+            x1 = dam_x + thickness / 2.0
+            y0 = s0
+            y1 = s1
         else:
-            center_x = min(
-                max(center_x, allowed_min_x + half_x),
-                allowed_max_x - half_x,
-            )
+            x0 = s0
+            x1 = s1
+            y0 = dam_y - thickness / 2.0
+            y1 = dam_y + thickness / 2.0
 
-    if allowed_max_y > allowed_min_y:
-        span_y = 2.0 * half_y
-        allowed_span_y = allowed_max_y - allowed_min_y
+        stats = _cell_stats(
+            x, y, z,
+            x0 - expand, x1 + expand,
+            y0 - expand, y1 + expand,
+        )
 
-        if span_y >= allowed_span_y:
-            center_y = (allowed_min_y + allowed_max_y) / 2.0
+        if stats is None:
+            ground_z = default_ground_z
+            terrain_max = None
         else:
-            center_y = min(
-                max(center_y, allowed_min_y + half_y),
-                allowed_max_y - half_y,
+            ground_z = stats["median"]
+            terrain_max = stats["max"]
+
+        z0 = ground_z - embedment
+        z1 = common_crest_z
+
+        # NO FALLBACK. If z1 <= z0, validation will catch it.
+
+        boxes.append(
+            WallBox(
+                x0=float(x0),
+                x1=float(x1),
+                y0=float(y0),
+                y1=float(y1),
+                z0=float(z0),
+                z1=float(z1),
+                ground_z=float(ground_z),
+                cell_terrain_max=terrain_max,
+                kind=kind,
             )
+        )
 
-    x0 = center_x - half_x
-    x1 = center_x + half_x
-    y0 = center_y - half_y
-    y1 = center_y + half_y
+    return boxes
 
-    return center_x, center_y, x0, x1, y0, y1
+
+def _make_reservoir_boxes(
+    flow_axis: str,
+    upstream_sign: float,
+    dam_x: float,
+    dam_y: float,
+    thickness: float,
+    span_start: float,
+    span_end: float,
+    reservoir_length: float,
+    reservoir_segments: int,
+    water_depth: float,
+    fluid_bed_clearance: float,
+    particle_spacing: float,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    default_ground_z: float,
+) -> tuple[list[FluidBox], float | None]:
+    """
+    Build terrain-following reservoir segments with ONE common horizontal
+    water-surface elevation.
+
+    z0 = bed_z + fluid_bed_clearance
+    z1 = common_water_surface_z  (same for ALL segments)
+
+    NO fallback is applied. If z1 <= z0 for any segment, validation will fail.
+    """
+    if span_end <= span_start:
+        return [], None
+
+    intervals = _split_interval(
+        span_start,
+        span_end,
+        (span_end - span_start) / max(1, reservoir_segments),
+        max_segments=max(1, reservoir_segments),
+    )
+
+    if not intervals:
+        return [], None
+
+    # Determine flow-axis coordinates.
+    if flow_axis == "x":
+        upstream_face = dam_x + upstream_sign * thickness / 2.0
+        if upstream_sign > 0:
+            fluid_x0 = upstream_face + fluid_bed_clearance
+            fluid_x1 = fluid_x0 + reservoir_length
+        else:
+            fluid_x1 = upstream_face - fluid_bed_clearance
+            fluid_x0 = fluid_x1 - reservoir_length
+    else:
+        upstream_face = dam_y + upstream_sign * thickness / 2.0
+        if upstream_sign > 0:
+            fluid_y0 = upstream_face + fluid_bed_clearance
+            fluid_y1 = fluid_y0 + reservoir_length
+        else:
+            fluid_y1 = upstream_face - fluid_bed_clearance
+            fluid_y0 = fluid_y1 - reservoir_length
+
+    # First pass: determine bed elevation for each segment.
+    bed_elevations: list[float] = []
+    terrain_maxes: list[float | None] = []
+
+    for s0, s1 in intervals:
+        if flow_axis == "x":
+            x0, x1 = fluid_x0, fluid_x1
+            y0, y1 = s0, s1
+        else:
+            x0, x1 = s0, s1
+            y0, y1 = fluid_y0, fluid_y1
+
+        stats = _cell_stats(x, y, z, x0, x1, y0, y1)
+        if stats is None:
+            bed_elevations.append(default_ground_z)
+            terrain_maxes.append(None)
+        else:
+            bed_elevations.append(stats["max"])
+            terrain_maxes.append(stats["max"])
+
+    if not bed_elevations:
+        return [], None
+
+    # Common water surface: above every bed by at least water_depth.
+    max_bed = max(bed_elevations)
+    common_water_surface_z = max_bed + water_depth
+
+    # Second pass: create boxes.
+    boxes: list[FluidBox] = []
+
+    for i, (s0, s1) in enumerate(intervals):
+        if flow_axis == "x":
+            x0, x1 = fluid_x0, fluid_x1
+            y0, y1 = s0, s1
+        else:
+            x0, x1 = s0, s1
+            y0, y1 = fluid_y0, fluid_y1
+
+        bed_z = bed_elevations[i]
+        terrain_max = terrain_maxes[i]
+
+        z0 = bed_z + fluid_bed_clearance
+        z1 = common_water_surface_z
+
+        actual_depth = z1 - z0
+
+        # NO FALLBACK. If actual_depth <= 0, validation will catch it.
+
+        boxes.append(
+            FluidBox(
+                x0=float(x0),
+                x1=float(x1),
+                y0=float(y0),
+                y1=float(y1),
+                z0=float(z0),
+                z1=float(z1),
+                ground_z=float(bed_z),
+                cell_terrain_max=terrain_max,
+                water_surface_z=float(z1),
+                water_depth=float(actual_depth),
+            )
+        )
+
+    return boxes, common_water_surface_z
 
 
 def _smoothstep(progress: float) -> float:
@@ -504,7 +676,6 @@ def _write_gate_motion(
 
             if span > MOTION_EPS:
                 steps = max(1, int(motion_steps))
-
                 for i in range(1, steps + 1):
                     t = start_open + span * (i / steps)
                     if t > end_time:
@@ -536,6 +707,22 @@ def _write_gate_motion(
     return duration
 
 
+def _drawbox_xml(box: WallBox | FluidBox, indent: str = "                    ") -> str:
+    size_x = max(box.x1 - box.x0, 1e-6)
+    size_y = max(box.y1 - box.y0, 1e-6)
+    size_z = max(box.z1 - box.z0, 1e-6)
+
+    return f"""{indent}<drawbox>
+{indent}    <boxfill>
+{indent}        solid
+{indent}    </boxfill>
+{indent}    <point x="{_f(box.x0)}" y="{_f(box.y0)}" z="{_f(box.z0)}" />
+{indent}    <size x="{_f(size_x)}" y="{_f(size_y)}" z="{_f(size_z)}" />
+{indent}</drawbox>
+
+"""
+
+
 def _build_motion_xml(motion_file: str, motion_duration: float) -> str:
     motion_attribute = quoteattr(motion_file)
     return f"""        <motion>
@@ -548,675 +735,338 @@ def _build_motion_xml(motion_file: str, motion_duration: float) -> str:
         </motion>"""
 
 
-def _build_simulation_domain_xml(simulation_posmax_z: float | None) -> str:
-    if simulation_posmax_z is None:
-        return """            <simulationdomain>
+def _build_simulation_domain_xml(
+    pointmin: tuple[float, float, float],
+    pointmax: tuple[float, float, float],
+) -> str:
+    """
+    Build a fully explicit numeric simulation domain.
 
-                <posmin
-                    x="default"
-                    y="default"
-                    z="default" />
-
-                <posmax
-                    x="default"
-                    y="default"
-                    z="default + 50%" />
-
-            </simulationdomain>"""
+    No "default" values are allowed for the terrain flood case.
+    """
 
     return f"""            <simulationdomain>
 
                 <posmin
-                    x="default"
-                    y="default"
-                    z="default" />
+                    x="{pointmin[0]:.10f}"
+                    y="{pointmin[1]:.10f}"
+                    z="{pointmin[2]:.10f}" />
 
                 <posmax
-                    x="default"
-                    y="default"
-                    z="{_f(simulation_posmax_z)}" />
+                    x="{pointmax[0]:.10f}"
+                    y="{pointmax[1]:.10f}"
+                    z="{pointmax[2]:.10f}" />
 
             </simulationdomain>"""
 
-
-def _build_wall_fragment(
-    geom: TerrainCaseGeometry,
-    particle_spacing: float,
-    breach_enabled: bool = False,
-) -> str:
-    if not geom.wall_enabled:
-        return ""
-
-    wall_x0 = geom.wall_x0
-    wall_x1 = geom.wall_x1
-    wall_y0 = geom.wall_y0
-    wall_y1 = geom.wall_y1
-    wall_base_z = geom.wall_base_z
-    wall_top_z = geom.wall_top_z
-
-    if (
-        wall_x0 is None
-        or wall_x1 is None
-        or wall_y0 is None
-        or wall_y1 is None
-        or wall_base_z is None
-        or wall_top_z is None
-    ):
-        return ""
-
-    size_x = max(wall_x1 - wall_x0, particle_spacing)
-    size_y = max(wall_y1 - wall_y0, particle_spacing)
-    size_z = max(wall_top_z - wall_base_z, particle_spacing)
-
-    if breach_enabled:
-        wall_comment = """                    <!-- Experimental moving breach gate -->
-                    <!-- Prototype timing only; not observed Chouldari failure data -->"""
-        mk = BREACH_GATE_MK
-    else:
-        wall_comment = """                    <!-- Temporary fixed test dam wall -->
-                    <!-- Experimental containment only, not the final dam or breach -->"""
-        mk = 1
-
-    return f"""{wall_comment}
-
-                    <setmkbound mk="{mk}" />
-
-                    <drawbox>
-
-                        <boxfill>
-                            solid
-                        </boxfill>
-
-                        <point
-                            x="{_f(wall_x0)}"
-                            y="{_f(wall_y0)}"
-                            z="{_f(wall_base_z)}" />
-
-                        <size
-                            x="{_f(size_x)}"
-                            y="{_f(size_y)}"
-                            z="{_f(size_z)}" />
-
-                    </drawbox>
-
-"""
-
-
 def _build_xml(
-    stl_file: str,
-    motion_file: str | None,
     cfg: dict,
-    geom: TerrainCaseGeometry,
-    breach_enabled: bool,
+    geom: DamGeometry,
+    reservoir: ReservoirGeometry,
+    pointmin: tuple[float, float, float],
+    pointmax: tuple[float, float, float],
+    stl_reference: str,
+    motion_reference: str | None,
     motion_duration: float | None,
-    simulation_posmax_z: float | None,
 ) -> str:
     particle_spacing = float(cfg["particle_spacing"])
     simulation_time = float(cfg["simulation_time"])
     time_out = float(cfg["time_out"])
 
-    reservoir_x = geom.reservoir_x0
-    reservoir_y = geom.reservoir_y0
-    reservoir_z = geom.reservoir_base_z
+    stl_attribute = quoteattr(stl_reference)
 
-    reservoir_size_x = max(
-        geom.reservoir_x1 - geom.reservoir_x0,
-        particle_spacing,
-    )
-    reservoir_size_y = max(
-        geom.reservoir_y1 - geom.reservoir_y0,
-        particle_spacing,
-    )
-    reservoir_size_z = max(
-        geom.reservoir_depth,
-        particle_spacing,
-    )
+    fixed_wall_xml = ""
+    if geom.fixed_boxes:
+        fixed_wall_xml = "                    <!-- Terrain-anchored fixed dam segments -->\n"
+        fixed_wall_xml += f"                    <setmkbound mk=\"{FIXED_WALL_MK}\" />\n\n"
+        for box in geom.fixed_boxes:
+            fixed_wall_xml += _drawbox_xml(box)
 
-    wall_xml = _build_wall_fragment(
-        geom,
-        particle_spacing,
-        breach_enabled=breach_enabled,
-    )
-    stl_attribute = quoteattr(stl_file)
+    breach_wall_xml = ""
+    if geom.breach_box is not None:
+        breach_wall_xml = "                    <!-- Moving centered breach gate -->\n"
+        breach_wall_xml += f"                    <setmkbound mk=\"{BREACH_GATE_MK}\" />\n\n"
+        breach_wall_xml += _drawbox_xml(geom.breach_box)
+
+    reservoir_xml = ""
+    if reservoir.boxes:
+        reservoir_xml = "                    <!-- Terrain-following upstream reservoir -->\n"
+        reservoir_xml += "                    <setmkfluid mk=\"0\" />\n\n"
+        for box in reservoir.boxes:
+            reservoir_xml += _drawbox_xml(box)
 
     motion_xml = ""
     if (
-        breach_enabled
-        and motion_file is not None
+        geom.breach_box is not None
+        and motion_reference is not None
         and motion_duration is not None
     ):
-        motion_xml = _build_motion_xml(motion_file, motion_duration)
+        motion_xml = _build_motion_xml(motion_reference, motion_duration)
 
-    simulation_domain_xml = _build_simulation_domain_xml(simulation_posmax_z)
-
-    # Conditional comment to accurately reflect terrain vs gate state
-    if breach_enabled:
-        terrain_comment = """                    <!-- Experimental DEM terrain surface -->
-                    <!-- Source: Copernicus GLO-30 DSM -->
-                    <!-- Coordinates are already numerically scaled -->
-                    <!-- Terrain is fixed; experimental breach gate is moving -->"""
-    else:
-        terrain_comment = """                    <!-- Experimental DEM terrain surface -->
-                    <!-- Source: Copernicus GLO-30 DSM -->
-                    <!-- Coordinates are already numerically scaled -->
-                    <!-- Fixed boundary only; no motion is applied -->"""
+    simulation_domain_xml = _build_simulation_domain_xml(pointmin, pointmax)
 
     return f"""<?xml version="1.0" encoding="UTF-8" ?>
 <case>
-
     <casedef>
-
         <constantsdef>
-
-            <gravity
-                x="0"
-                y="0"
-                z="-9.81"
-                comment="Gravitational acceleration"
-                units_comment="m/s^2" />
-
-            <rhop0
-                value="1000"
-                comment="Reference density of the fluid"
-                units_comment="kg/m^3" />
-
+            <gravity x="0" y="0" z="-9.81" comment="Gravitational acceleration" units_comment="m/s^2" />
+            <rhop0 value="1000" comment="Reference density of the fluid" units_comment="kg/m^3" />
             <rhopgradient value="2" />
-
-            <hswl
-                value="0"
-                auto="true" />
-
+            <hswl value="0" auto="true" />
             <gamma value="7" />
-
-            <speedsystem
-                value="0"
-                auto="true" />
-
+            <speedsystem value="0" auto="true" />
             <coefsound value="20" />
-
-            <speedsound
-                value="0"
-                auto="true" />
-
+            <speedsound value="0" auto="true" />
             <coefh value="1.0" />
-
             <_hdp value="2" />
-
             <cflnumber value="0.2" />
-
         </constantsdef>
-
-        <mkconfig
-            boundcount="240"
-            fluidcount="9" />
-
+        <mkconfig boundcount="240" fluidcount="9" />
         <geometry>
-
-            <definition
-                dp="{_f(particle_spacing)}"
-                units_comment="simulation metres (scaled prototype units)">
-
-                <pointmin
-                    x="{_f(geom.pointmin_x)}"
-                    y="{_f(geom.pointmin_y)}"
-                    z="{_f(geom.pointmin_z)}" />
-
-                <pointmax
-                    x="{_f(geom.pointmax_x)}"
-                    y="{_f(geom.pointmax_y)}"
-                    z="{_f(geom.pointmax_z)}" />
-
+            <definition dp="{_f(particle_spacing)}" units_comment="simulation metres (scaled prototype units)">
+                <pointmin x="{_f(pointmin[0])}" y="{_f(pointmin[1])}" z="{_f(pointmin[2])}" />
+                <pointmax x="{_f(pointmax[0])}" y="{_f(pointmax[1])}" z="{_f(pointmax[2])}" />
             </definition>
-
             <commands>
-
                 <mainlist>
-
-                    <setshapemode>
-                        dp | bound
-                    </setshapemode>
-
+                    <setshapemode>dp | bound</setshapemode>
                     <setdrawmode mode="full" />
-
-{terrain_comment}
-
-                    <setmkbound mk="0" />
-
+                    <!-- Real DEM terrain surface remains fixed -->
+                    <setmkbound mk="{TERRAIN_MK}" />
                     <drawfilestl file={stl_attribute} />
 
-{wall_xml}                    <!-- Simple preliminary reservoir volume -->
-
-                    <setmkfluid mk="0" />
-
-                    <drawbox>
-
-                        <boxfill>
-                            solid
-                        </boxfill>
-
-                        <point
-                            x="{_f(reservoir_x)}"
-                            y="{_f(reservoir_y)}"
-                            z="{_f(reservoir_z)}" />
-
-                        <size
-                            x="{_f(reservoir_size_x)}"
-                            y="{_f(reservoir_size_y)}"
-                            z="{_f(reservoir_size_z)}" />
-
-                    </drawbox>
-
+{fixed_wall_xml}
+{breach_wall_xml}
+{reservoir_xml}
                 </mainlist>
-
             </commands>
-
         </geometry>
 
 {motion_xml}
     </casedef>
-
     <execution>
-
         <parameters>
-
-            <parameter
-                key="SavePosDouble"
-                value="0" />
-
-            <parameter
-                key="StepAlgorithm"
-                value="1" />
-
-            <parameter
-                key="VerletSteps"
-                value="40" />
-
-            <parameter
-                key="Kernel"
-                value="1" />
-
-            <parameter
-                key="ViscoTreatment"
-                value="1" />
-
-            <parameter
-                key="Visco"
-                value="0.1" />
-
-            <parameter
-                key="ViscoBoundFactor"
-                value="1" />
-
-            <parameter
-                key="DensityDT"
-                value="2" />
-
-            <parameter
-                key="DensityDTvalue"
-                value="0.1" />
-
-            <parameter
-                key="Shifting"
-                value="0" />
-
-            <parameter
-                key="RigidAlgorithm"
-                value="1" />
-
-            <parameter
-                key="CoefDtMin"
-                value="0.05" />
-
-            <parameter
-                key="DtIni"
-                value="0" />
-
-            <parameter
-                key="DtMin"
-                value="0" />
-
-            <parameter
-                key="DtFixed"
-                value="0" />
-
-            <parameter
-                key="DtFixedFile"
-                value="NONE" />
-
-            <parameter
-                key="DtAllParticles"
-                value="0" />
-
-            <parameter
-                key="TimeMax"
-                value="{_f(simulation_time)}" />
-
-            <parameter
-                key="TimeOut"
-                value="{_f(time_out)}" />
-
-            <parameter
-                key="PartsOutMax"
-                value="1" />
-
-            <parameter
-                key="RhopOutMin"
-                value="700" />
-
-            <parameter
-                key="RhopOutMax"
-                value="1300" />
+            <parameter key="SavePosDouble" value="0" />
+            <parameter key="StepAlgorithm" value="1" />
+            <parameter key="VerletSteps" value="40" />
+            <parameter key="Kernel" value="1" />
+            <parameter key="ViscoTreatment" value="1" />
+            <parameter key="Visco" value="0.1" />
+            <parameter key="ViscoBoundFactor" value="1" />
+            <parameter key="DensityDT" value="2" />
+            <parameter key="DensityDTvalue" value="0.1" />
+            <parameter key="Shifting" value="0" />
+            <parameter key="RigidAlgorithm" value="1" />
+            <parameter key="CoefDtMin" value="0.05" />
+            <parameter key="DtIni" value="0" />
+            <parameter key="DtMin" value="0" />
+            <parameter key="DtFixed" value="0" />
+            <parameter key="DtFixedFile" value="NONE" />
+            <parameter key="DtAllParticles" value="0" />
+            <parameter key="TimeMax" value="{_f(simulation_time)}" />
+            <parameter key="TimeOut" value="{_f(time_out)}" />
+            <parameter key="PartsOutMax" value="1" />
+            <parameter key="RhopOutMin" value="700" />
+            <parameter key="RhopOutMax" value="1300" />
 
 {simulation_domain_xml}
 
         </parameters>
-
     </execution>
-
 </case>
 """
 
+def _bounds_from_boxes(boxes: list[dict]) -> dict | None:
+    """
+    Compute combined XYZ bounds from a list of generated boxes.
+    """
 
-def _validate_xml_file(
-    path: Path,
-    expected_stl_reference: str,
-    resolve_base: Path,
-    label: str,
-    errors: list[str],
-    check,
-) -> None:
-    exists = path.exists()
-    check(exists, f"{label} XML exists: {path}")
+    if not boxes:
+        return None
 
-    if not exists:
-        return
+    return {
+        "x_min": min(float(box["x0"]) for box in boxes),
+        "x_max": max(float(box["x1"]) for box in boxes),
+        "y_min": min(float(box["y0"]) for box in boxes),
+        "y_max": max(float(box["y1"]) for box in boxes),
+        "z_min": min(float(box["z0"]) for box in boxes),
+        "z_max": max(float(box["z1"]) for box in boxes),
+    }
 
-    check(path.stat().st_size > 0, f"{label} XML is non-empty")
+
+def _parse_simulation_domain_xml(xml_path: Path) -> dict:
+    """
+    Parse <simulationdomain> from generated XML.
+
+    Fails if any coordinate is missing, non-numeric, or set to "default".
+    """
+
+    errors: list[str] = []
+    default_free = True
+    pointmin = None
+    pointmax = None
 
     try:
-        tree = ET.parse(path)
+        tree = ET.parse(xml_path)
     except ET.ParseError as exc:
-        check(False, f"{label} XML parse error: {exc}")
-        return
-
-    check(True, f"{label} XML is well-formed")
+        return {
+            "file": str(xml_path),
+            "errors": [f"XML parse error: {exc}"],
+            "default_free": False,
+            "pointmin": None,
+            "pointmax": None,
+        }
 
     root = tree.getroot()
-    check(root.tag == "case", f"{label} root tag is <case>")
+    simulation_domain = root.find(".//simulationdomain")
 
-    required_paths = [
-        "casedef",
-        "casedef/constantsdef",
-        "casedef/constantsdef/gravity",
-        "casedef/constantsdef/rhop0",
-        "casedef/mkconfig",
-        "casedef/geometry",
-        "casedef/geometry/definition",
-        "casedef/geometry/definition/pointmin",
-        "casedef/geometry/definition/pointmax",
-        "casedef/geometry/commands",
-        "casedef/geometry/commands/mainlist",
-        "execution",
-        "execution/parameters",
-        "execution/parameters/simulationdomain",
-    ]
+    if simulation_domain is None:
+        return {
+            "file": str(xml_path),
+            "errors": ["Generated XML does not contain <simulationdomain>"],
+            "default_free": False,
+            "pointmin": None,
+            "pointmax": None,
+        }
 
-    for required in required_paths:
-        element = root.find(required)
-        short_name = required.split("/")[-1]
-        check(
-            element is not None,
-            f"{label} XML contains required element <{short_name}>",
+    posmin_element = simulation_domain.find("posmin")
+    posmax_element = simulation_domain.find("posmax")
+
+    def parse_point(element, label: str) -> tuple[float, float, float] | None:
+        nonlocal default_free
+
+        if element is None:
+            errors.append(f"<simulationdomain> is missing <{label}>")
+            default_free = False
+            return None
+
+        values = []
+
+        for axis in ("x", "y", "z"):
+            raw = element.get(axis)
+
+            if raw is None:
+                errors.append(f"{label} is missing the {axis} attribute")
+                default_free = False
+                values.append(None)
+                continue
+
+            text = raw.strip()
+
+            if text.lower() == "default":
+                errors.append(f"{label} {axis} is set to 'default'")
+                default_free = False
+                values.append(None)
+                continue
+
+            try:
+                values.append(float(text))
+            except ValueError:
+                errors.append(
+                    f"{label} {axis} is not numeric: '{raw}'"
+                )
+                default_free = False
+                values.append(None)
+
+        if any(value is None for value in values):
+            return None
+
+        return (
+            float(values[0]),
+            float(values[1]),
+            float(values[2]),
         )
 
-    drawboxes = root.findall(".//drawbox")
-    check(
-        len(drawboxes) >= 1,
-        f"{label} XML contains at least one <drawbox>",
-    )
+    pointmin = parse_point(posmin_element, "posmin")
+    pointmax = parse_point(posmax_element, "posmax")
 
-    stl_element = root.find(".//drawfilestl")
-    check(
-        stl_element is not None,
-        f"{label} XML contains <drawfilestl>",
-    )
+    if pointmin is not None and pointmax is not None:
+        axis_names = ("x", "y", "z")
 
-    if stl_element is not None:
-        file_attribute = stl_element.get("file")
-
-        check(
-            file_attribute == expected_stl_reference,
-            f"{label} XML STL reference matches expected path",
-        )
-
-        if file_attribute:
-            resolved = resolve_base / file_attribute
-            check(
-                resolved.exists(),
-                f"{label} XML STL reference resolves: {resolved}",
-            )
-
-            if resolved.exists():
-                check(
-                    resolved.stat().st_size > 0,
-                    f"{label} XML STL file is non-empty",
+        for i, axis in enumerate(axis_names):
+            if not pointmin[i] < pointmax[i]:
+                errors.append(
+                    f"posmin {axis} is not less than posmax {axis}: "
+                    f"{pointmin[i]} >= {pointmax[i]}"
                 )
 
+    return {
+        "file": str(xml_path),
+        "errors": errors,
+        "default_free": default_free,
+        "pointmin": pointmin,
+        "pointmax": pointmax,
+    }
 
-def _check_xml_motion(
-    path: Path,
-    expected_motion_reference: str | None,
-    resolve_base: Path,
-    label: str,
-    breach_enabled: bool,
-    errors: list[str],
-    check,
-) -> None:
-    if not path.exists():
-        check(False, f"{label} XML does not exist: {path}")
-        return
 
-    try:
-        tree = ET.parse(path)
-    except ET.ParseError as exc:
-        check(False, f"{label} XML parse error while checking motion: {exc}")
-        return
+def _validate_simulation_domain_xml(
+    xml_path: Path,
+    required_bounds: dict,
+) -> dict:
+    """
+    Validate that the generated XML simulation domain:
 
-    root = tree.getroot()
-    motion = root.find(".//motion")
+    - contains no 'default' values
+    - is fully numeric
+    - has posmin < posmax on all axes
+    - contains terrain, reservoir, dam/breach, and lifted-breach bounds
+    """
 
-    if not breach_enabled:
-        check(
-            motion is None,
-            f"{label} XML contains no motion when breach is disabled",
-        )
-        return
+    parsed = _parse_simulation_domain_xml(xml_path)
 
-    check(
-        motion is not None,
-        f"{label} XML contains <motion> for breach gate",
-    )
+    errors = list(parsed["errors"])
+    pointmin = parsed["pointmin"]
+    pointmax = parsed["pointmax"]
 
-    if motion is None:
-        return
+    contains = {}
 
-    objreal = motion.find("objreal")
-    check(
-        objreal is not None,
-        f"{label} XML motion contains <objreal>",
-    )
+    if pointmin is not None and pointmax is not None:
+        eps = 1e-6
 
-    if objreal is not None:
-        check(
-            objreal.get("ref") == str(BREACH_GATE_MK),
-            f"{label} XML motion objreal ref is {BREACH_GATE_MK}",
-        )
+        for name, bounds in required_bounds.items():
+            if bounds is None:
+                contains[name] = None
+                continue
 
-    mvfile = motion.find(".//mvfile")
-    check(
-        mvfile is not None,
-        f"{label} XML motion contains <mvfile>",
-    )
-
-    file_element = motion.find(".//file")
-    check(
-        file_element is not None,
-        f"{label} XML motion contains <file>",
-    )
-
-    if file_element is not None:
-        motion_name = file_element.get("name")
-
-        check(
-            motion_name == expected_motion_reference,
-            f"{label} XML motion file reference matches expected path",
-        )
-
-        if motion_name:
-            resolved = resolve_base / motion_name
-            check(
-                resolved.exists(),
-                f"{label} XML motion file resolves: {resolved}",
+            ok = (
+                bounds["x_min"] >= pointmin[0] - eps
+                and bounds["x_max"] <= pointmax[0] + eps
+                and bounds["y_min"] >= pointmin[1] - eps
+                and bounds["y_max"] <= pointmax[1] + eps
+                and bounds["z_min"] >= pointmin[2] - eps
+                and bounds["z_max"] <= pointmax[2] + eps
             )
 
-            if resolved.exists():
-                check(
-                    resolved.stat().st_size > 0,
-                    f"{label} XML motion file is non-empty",
+            contains[name] = ok
+
+            if not ok:
+                errors.append(
+                    f"simulation domain does not fully contain {name}"
                 )
+    else:
+        for name in required_bounds:
+            contains[name] = False
+
+    return {
+        "file": str(xml_path),
+        "status": "pass" if not errors else "fail",
+        "errors": errors,
+        "default_free": parsed["default_free"],
+        "pointmin": list(pointmin) if pointmin is not None else None,
+        "pointmax": list(pointmax) if pointmax is not None else None,
+        "contains": contains,
+    }
 
 
-def _validate_motion_file(
-    motion_path: Path,
-    geom: TerrainCaseGeometry,
-    expected_initial_x: float,
-    expected_initial_y: float,
-    expected_initial_z: float,
-    breach_time: float,
-    lift_duration: float,
-    lift_distance: float,
-    errors: list[str],
-    check,
-) -> None:
-    exists = motion_path.exists()
-    check(exists, f"Gate motion file exists: {motion_path}")
-
-    if not exists:
-        return
-
-    check(
-        motion_path.stat().st_size > 0,
-        f"Gate motion file is non-empty: {motion_path}",
-    )
-
-    try:
-        text = motion_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        check(False, f"Unable to read gate motion file: {exc}")
-        return
-
-    rows: list[list[float]] = []
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        parts = line.split()
-        if len(parts) != 4:
-            check(False, f"Motion file line does not have 4 columns: {line}")
-            continue
-
-        try:
-            t = float(parts[0])
-            x = float(parts[1])
-            y = float(parts[2])
-            z = float(parts[3])
-        except ValueError:
-            check(False, f"Motion file line contains non-numeric values: {line}")
-            continue
-
-        if not (
-            math.isfinite(t)
-            and math.isfinite(x)
-            and math.isfinite(y)
-            and math.isfinite(z)
-        ):
-            check(False, f"Motion file line contains non-finite values: {line}")
-            continue
-
-        rows.append([t, x, y, z])
-
-    check(len(rows) >= 2, "Motion file contains at least two rows")
-
-    if len(rows) < 2:
-        return
-
-    times = [row[0] for row in rows]
-    xs = [row[1] for row in rows]
-    ys = [row[2] for row in rows]
-    zs = [row[3] for row in rows]
-
-    check(abs(times[0]) <= MOTION_EPS, "Motion file starts at t=0")
-
-    monotonic = all(
-        times[i] >= times[i - 1] - MOTION_EPS
-        for i in range(1, len(times))
-    )
-    check(monotonic, "Motion file time values are monotonic")
-
-    x_constant = all(
-        abs(x - expected_initial_x) <= 1e-5
-        for x in xs
-    )
-    check(x_constant, "Motion file X remains constant")
-
-    y_constant = all(
-        abs(y - expected_initial_y) <= 1e-5
-        for y in ys
-    )
-    check(y_constant, "Motion file Y remains constant")
-
-    z_non_decreasing = all(
-        zs[i] >= zs[i - 1] - 1e-6
-        for i in range(1, len(zs))
-    )
-    check(z_non_decreasing, "Motion file Z is non-decreasing")
-
-    check(
-        abs(zs[0] - expected_initial_z) <= 1e-5,
-        "Motion file initial Z matches gate initial Z",
-    )
-
-    expected_final_z = expected_initial_z + lift_distance
-    check(
-        abs(zs[-1] - expected_final_z) <= 1e-3,
-        "Motion file final Z matches gate initial Z + lift distance",
-    )
-
-    check(
-        zs[-1] > zs[0] + MOTION_EPS,
-        "Motion file final Z is greater than initial Z",
-    )
-
-    eps = 1e-6
-    inside = all(
-        geom.pointmin_x - eps <= row[1] <= geom.pointmax_x + eps
-        and geom.pointmin_y - eps <= row[2] <= geom.pointmax_y + eps
-        and geom.pointmin_z - eps <= row[3] <= geom.pointmax_z + eps
-        for row in rows
-    )
-    check(inside, "All motion positions lie inside the simulation domain")
-
-
-def _validate_breach(
+def _validate_geometry(
     cfg: dict,
-    geom: TerrainCaseGeometry,
+    geom: DamGeometry,
+    reservoir: ReservoirGeometry,
+    pointmin: tuple[float, float, float],
+    pointmax: tuple[float, float, float],
     motion_path: Path,
     standalone_xml: Path,
     runner_xml: Path,
-    standalone_motion_reference: str | None,
-    runner_motion_reference: str | None,
     simulation_time: float,
 ) -> dict:
     errors: list[str] = []
@@ -1229,327 +1079,231 @@ def _validate_breach(
         else:
             errors.append(message)
 
-    breach_enabled_raw = cfg.get("breach_enabled", False)
-    check(
-        isinstance(breach_enabled_raw, bool),
-        "breach_enabled must be a boolean",
-    )
+    fluid_clearance = float(cfg.get("fluid_bed_clearance", 0.02))
+    breach_enabled = bool(cfg.get("breach_enabled", False))
 
-    breach_enabled = bool(breach_enabled_raw)
+    # --- Dam wall validation ---
 
-    if not breach_enabled:
+    wall_boxes = list(geom.fixed_boxes)
+    if geom.breach_box is not None:
+        wall_boxes.append(geom.breach_box)
+
+    check(len(wall_boxes) > 0, "Dam wall has at least one wall segment")
+
+    # All dam crest elevations must be identical within 1e-6.
+    wall_crests = [box.z1 for box in wall_boxes]
+    if wall_crests:
+        crest_spread = max(wall_crests) - min(wall_crests)
         check(
-            not motion_path.exists(),
-            "Gate motion file is absent when breach is disabled",
+            crest_spread <= 1e-6,
+            f"All dam crests identical (spread={crest_spread:.9f})",
         )
-
-        _check_xml_motion(
-            path=standalone_xml,
-            expected_motion_reference=None,
-            resolve_base=CASE_DIR,
-            label="Standalone",
-            breach_enabled=False,
-            errors=errors,
-            check=check,
-        )
-
-        _check_xml_motion(
-            path=runner_xml,
-            expected_motion_reference=None,
-            resolve_base=CASE_DIR,
-            label="Runner",
-            breach_enabled=False,
-            errors=errors,
-            check=check,
-        )
-
-        return {
-            "status": "pass" if not errors else "fail",
-            "checks_passed": checks,
-            "errors": errors,
-        }
-
-    breach_time = float(cfg.get("breach_time", 0.0))
-    lift_duration = float(cfg.get("breach_lift_duration", 0.0))
-    lift_distance = float(cfg.get("breach_lift_distance", 0.0))
-    motion_steps = int(cfg.get("breach_motion_steps", 0))
-
-    check(breach_time >= 0.0, "breach_time must be >= 0")
-    check(lift_duration > 0.0, "breach_lift_duration must be > 0")
-    check(lift_distance > 0.0, "breach_lift_distance must be > 0")
-    check(motion_steps > 0, "breach_motion_steps must be > 0")
-
-    check(
-        breach_time + lift_duration <= simulation_time + 1e-6,
-        "breach_time + breach_lift_duration must be <= simulation_time",
-    )
-
-    check(
-        geom.wall_enabled,
-        "test_dam_wall must be enabled when breach_enabled is true",
-    )
-
-    wall_available = (
-        geom.wall_x0 is not None
-        and geom.wall_x1 is not None
-        and geom.wall_y0 is not None
-        and geom.wall_y1 is not None
-        and geom.wall_base_z is not None
-        and geom.wall_top_z is not None
-    )
-
-    check(
-        wall_available,
-        "Gate wall geometry is available for breach motion",
-    )
-
-    if wall_available:
-        eps = 1e-6
-
-        initial_bounds = {
-            "x0": geom.wall_x0,
-            "x1": geom.wall_x1,
-            "y0": geom.wall_y0,
-            "y1": geom.wall_y1,
-            "z0": geom.wall_base_z,
-            "z1": geom.wall_top_z,
-        }
-
-        final_bounds = {
-            "x0": geom.wall_x0,
-            "x1": geom.wall_x1,
-            "y0": geom.wall_y0,
-            "y1": geom.wall_y1,
-            "z0": geom.wall_base_z + lift_distance,
-            "z1": geom.wall_top_z + lift_distance,
-        }
-
-        pointmin = (geom.pointmin_x, geom.pointmin_y, geom.pointmin_z)
-        pointmax = (geom.pointmax_x, geom.pointmax_y, geom.pointmax_z)
-
-        def check_bounds(name: str, bounds: dict) -> None:
+        if geom.crest_z is not None:
             check(
-                bounds["x0"] >= pointmin[0] - eps
-                and bounds["x1"] <= pointmax[0] + eps,
-                f"{name} x bounds fit inside simulation domain",
-            )
-            check(
-                bounds["y0"] >= pointmin[1] - eps
-                and bounds["y1"] <= pointmax[1] + eps,
-                f"{name} y bounds fit inside simulation domain",
-            )
-            check(
-                bounds["z0"] >= pointmin[2] - eps
-                and bounds["z1"] <= pointmax[2] + eps,
-                f"{name} z bounds fit inside simulation domain",
+                all(abs(c - geom.crest_z) <= 1e-6 for c in wall_crests),
+                "All dam crests equal dam_crest_z",
             )
 
-        check_bounds("initial gate", initial_bounds)
-        check_bounds("final lifted gate", final_bounds)
-
-        _validate_motion_file(
-            motion_path=motion_path,
-            geom=geom,
-            expected_initial_x=geom.wall_x0,
-            expected_initial_y=geom.wall_y0,
-            expected_initial_z=geom.wall_base_z,
-            breach_time=breach_time,
-            lift_duration=lift_duration,
-            lift_distance=lift_distance,
-            errors=errors,
-            check=check,
+    for i, box in enumerate(wall_boxes):
+        check(
+            box.z0 < box.z1,
+            f"Dam segment {i} bottom is below crest (z0={box.z0:.6f}, z1={box.z1:.6f})",
+        )
+        check(
+            box.z0 <= box.ground_z + 1e-3,
+            f"Dam segment {i} bottom is anchored at/below local terrain",
         )
 
-    _check_xml_motion(
-        path=standalone_xml,
-        expected_motion_reference=standalone_motion_reference,
-        resolve_base=CASE_DIR,
-        label="Standalone",
-        breach_enabled=True,
-        errors=errors,
-        check=check,
-    )
+    # --- Reservoir validation ---
 
-    _check_xml_motion(
-        path=runner_xml,
-        expected_motion_reference=runner_motion_reference,
-        resolve_base=CASE_DIR,
-        label="Runner",
-        breach_enabled=True,
-        errors=errors,
-        check=check,
-    )
+    check(len(reservoir.boxes) > 0, "Reservoir has at least one fluid segment")
 
-    return {
-        "status": "pass" if not errors else "fail",
-        "checks_passed": checks,
-        "errors": errors,
-    }
+    if geom.flow_axis == "x":
+        upstream_face = geom.center_x + geom.upstream_sign * geom.thickness / 2.0
+    else:
+        upstream_face = geom.center_y + geom.upstream_sign * geom.thickness / 2.0
 
+    # All reservoir water surfaces must be identical within 1e-6.
+    water_surfaces = [box.z1 for box in reservoir.boxes]
+    if water_surfaces:
+        ws_spread = max(water_surfaces) - min(water_surfaces)
+        check(
+            ws_spread <= 1e-6,
+            f"All water surfaces identical (spread={ws_spread:.9f})",
+        )
+        if reservoir.water_surface_z is not None:
+            check(
+                all(abs(ws - reservoir.water_surface_z) <= 1e-6 for ws in water_surfaces),
+                "All water surfaces equal common_water_surface_z",
+            )
 
-def _validate_case(
-    cfg: dict,
-    geom: TerrainCaseGeometry,
-    terrain_stl_bounds: dict,
-    stl_copy: Path,
-    standalone_xml: Path,
-    runner_xml: Path,
-    standalone_stl_reference: str,
-    runner_stl_reference: str,
-) -> dict:
-    errors: list[str] = []
-    checks = 0
+    for i, box in enumerate(reservoir.boxes):
+        check(
+            box.water_depth > 1e-6,
+            f"Reservoir segment {i} has positive water depth ({box.water_depth:.6f})",
+        )
 
-    def check(condition: bool, message: str) -> None:
-        nonlocal checks
-        if condition:
-            checks += 1
+        # Reservoir contacts upstream dam face.
+        if geom.flow_axis == "x":
+            if geom.upstream_sign > 0:
+                gap = box.x0 - upstream_face
+            else:
+                gap = upstream_face - box.x1
         else:
-            errors.append(message)
+            if geom.upstream_sign > 0:
+                gap = box.y0 - upstream_face
+            else:
+                gap = upstream_face - box.y1
 
-    particle_spacing = float(cfg["particle_spacing"])
-    simulation_time = float(cfg["simulation_time"])
-    time_out = float(cfg["time_out"])
-
-    check(
-        math.isfinite(particle_spacing) and particle_spacing > 0.0,
-        "particle_spacing must be positive",
-    )
-    check(
-        math.isfinite(simulation_time) and simulation_time > 0.0,
-        "simulation_time must be positive",
-    )
-    check(
-        math.isfinite(time_out) and time_out > 0.0,
-        "time_out must be positive",
-    )
-
-    check(
-        geom.pointmin_x < geom.pointmax_x,
-        "pointmin_x must be less than pointmax_x",
-    )
-    check(
-        geom.pointmin_y < geom.pointmax_y,
-        "pointmin_y must be less than pointmax_y",
-    )
-    check(
-        geom.pointmin_z < geom.pointmax_z,
-        "pointmin_z must be less than pointmax_z",
-    )
-
-    check(
-        geom.reservoir_base_z < geom.reservoir_top_z,
-        "reservoir_base_z must be below reservoir_top_z",
-    )
-
-    if geom.wall_enabled:
         check(
-            geom.wall_x0 is not None
-            and geom.wall_x1 is not None
-            and geom.wall_y0 is not None
-            and geom.wall_y1 is not None
-            and geom.wall_base_z is not None
-            and geom.wall_top_z is not None,
-            "test dam wall geometry must be defined when wall is enabled",
+            -1e-3 <= gap <= fluid_clearance + 1e-3,
+            f"Reservoir segment {i} is immediately upstream of dam face",
         )
+
+        # Reservoir does not overlap terrain.
+        if box.cell_terrain_max is not None:
+            check(
+                box.z0 >= box.cell_terrain_max + fluid_clearance - 1e-3,
+                f"Reservoir segment {i} does not overlap local terrain",
+            )
+
+    # --- Breach validation ---
+
+    if breach_enabled:
+        check(geom.breach_box is not None, "Moving breach box exists")
+        check(geom.breach_center is not None, "Breach center exists")
+        check(geom.breach_width is not None, "Breach width exists")
 
         if (
-            geom.wall_base_z is not None
-            and geom.wall_top_z is not None
+            geom.breach_center is not None
+            and geom.span_start is not None
+            and geom.span_end is not None
         ):
+            dam_center = (geom.span_start + geom.span_end) / 2.0
             check(
-                geom.wall_base_z < geom.wall_top_z,
-                "wall_base_z must be below wall_top_z",
+                abs(geom.breach_center - dam_center) <= 1e-6,
+                "Breach is centered on dam centerline",
             )
 
-    check(
-        stl_copy.exists(),
-        f"Terrain STL copy exists: {stl_copy}",
-    )
+        if (
+            geom.fixed_left_width is not None
+            and geom.fixed_right_width is not None
+        ):
+            check(
+                geom.fixed_left_width > 1e-3,
+                "Fixed dam segment remains on left side of breach",
+            )
+            check(
+                geom.fixed_right_width > 1e-3,
+                "Fixed dam segment remains on right side of breach",
+            )
 
-    if stl_copy.exists():
+        if geom.breach_box is not None and geom.gate_lift_distance is not None:
+            initial_z0 = geom.breach_box.z0
+            initial_z1 = geom.breach_box.z1
+            final_z0 = initial_z0 + geom.gate_lift_distance
+            final_z1 = initial_z1 + geom.gate_lift_distance
+            eps = 1e-6
+
+            check(
+                geom.breach_box.x0 >= pointmin[0] - eps
+                and geom.breach_box.x1 <= pointmax[0] + eps
+                and geom.breach_box.y0 >= pointmin[1] - eps
+                and geom.breach_box.y1 <= pointmax[1] + eps
+                and initial_z0 >= pointmin[2] - eps
+                and initial_z1 <= pointmax[2] + eps,
+                "Initial moving breach stays inside simulation domain",
+            )
+
+            check(
+                geom.breach_box.x0 >= pointmin[0] - eps
+                and geom.breach_box.x1 <= pointmax[0] + eps
+                and geom.breach_box.y0 >= pointmin[1] - eps
+                and geom.breach_box.y1 <= pointmax[1] + eps
+                and final_z0 >= pointmin[2] - eps
+                and final_z1 <= pointmax[2] + eps,
+                "Final lifted moving breach stays inside simulation domain",
+            )
+
+        check(motion_path.exists(), "Gate motion file exists")
+
+        if motion_path.exists():
+            try:
+                text = motion_path.read_text(encoding="utf-8")
+                rows = []
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) != 4:
+                        continue
+                    try:
+                        t, x, y, z = float(parts[0]), float(parts[1]), float(parts[2]), float(parts[3])
+                    except ValueError:
+                        continue
+                    if math.isfinite(t) and math.isfinite(x) and math.isfinite(y) and math.isfinite(z):
+                        rows.append((t, x, y, z))
+
+                check(len(rows) >= 2, "Motion file has at least two rows")
+
+                if len(rows) >= 2 and geom.breach_box is not None:
+                    times = [r[0] for r in rows]
+                    xs = [r[1] for r in rows]
+                    ys = [r[2] for r in rows]
+                    zs = [r[3] for r in rows]
+
+                    check(abs(times[0]) <= MOTION_EPS, "Motion starts at t=0")
+
+                    monotonic = all(
+                        times[i] >= times[i - 1] - MOTION_EPS
+                        for i in range(1, len(times))
+                    )
+                    check(monotonic, "Motion time is monotonic")
+
+                    check(
+                        all(abs(x - geom.breach_box.x0) <= 1e-4 for x in xs),
+                        "Motion X remains constant",
+                    )
+                    check(
+                        all(abs(y - geom.breach_box.y0) <= 1e-4 for y in ys),
+                        "Motion Y remains constant",
+                    )
+
+                    z_non_decreasing = all(
+                        zs[i] >= zs[i - 1] - 1e-6
+                        for i in range(1, len(zs))
+                    )
+                    check(z_non_decreasing, "Motion Z is non-decreasing")
+
+                    expected_final_z = geom.breach_box.z0 + geom.gate_lift_distance
+                    check(
+                        abs(zs[-1] - expected_final_z) <= 1e-3,
+                        "Motion final Z equals initial Z + actual lift distance",
+                    )
+
+                    check(
+                        all(z <= pointmax[2] + 1e-6 for z in zs),
+                        "Motion Z positions remain inside simulation domain",
+                    )
+
+            except OSError as exc:
+                check(False, f"Unable to read motion file: {exc}")
+
+    else:
         check(
-            stl_copy.stat().st_size > 0,
-            f"Terrain STL copy is non-empty: {stl_copy}",
+            not motion_path.exists(),
+            "Motion file is absent when breach is disabled",
         )
 
-    eps = 1e-6
-    pointmin = (geom.pointmin_x, geom.pointmin_y, geom.pointmin_z)
-    pointmax = (geom.pointmax_x, geom.pointmax_y, geom.pointmax_z)
-
-    def check_bounds(name: str, bounds: dict | None) -> None:
-        if bounds is None:
-            check(False, f"{name} bounds unavailable")
-            return
-
-        check(
-            bounds["x0"] >= pointmin[0] - eps
-            and bounds["x1"] <= pointmax[0] + eps,
-            f"{name} x bounds fit inside pointmin/pointmax",
-        )
-        check(
-            bounds["y0"] >= pointmin[1] - eps
-            and bounds["y1"] <= pointmax[1] + eps,
-            f"{name} y bounds fit inside pointmin/pointmax",
-        )
-        check(
-            bounds["z0"] >= pointmin[2] - eps
-            and bounds["z1"] <= pointmax[2] + eps,
-            f"{name} z bounds fit inside pointmin/pointmax",
-        )
-
-    check_bounds("terrain STL", terrain_stl_bounds)
-
-    reservoir_bounds = {
-        "x0": geom.reservoir_x0,
-        "x1": geom.reservoir_x1,
-        "y0": geom.reservoir_y0,
-        "y1": geom.reservoir_y1,
-        "z0": geom.reservoir_base_z,
-        "z1": geom.reservoir_top_z,
-    }
-    check_bounds("reservoir", reservoir_bounds)
-
-    wall_bounds = None
-    if geom.wall_enabled:
-        wall_bounds = {
-            "x0": geom.wall_x0,
-            "x1": geom.wall_x1,
-            "y0": geom.wall_y0,
-            "y1": geom.wall_y1,
-            "z0": geom.wall_base_z,
-            "z1": geom.wall_top_z,
-        }
-        check_bounds("test dam wall", wall_bounds)
-
-    check(
-        geom.reservoir_top_z <= geom.pointmax_z - eps,
-        "reservoir_top_z must be below simulation pointmax_z",
-    )
-
-    if geom.wall_enabled and geom.wall_top_z is not None:
-        check(
-            geom.wall_top_z <= geom.pointmax_z - eps,
-            "wall_top_z must be below simulation pointmax_z",
-        )
-
-    _validate_xml_file(
-        path=standalone_xml,
-        expected_stl_reference=standalone_stl_reference,
-        resolve_base=CASE_DIR,
-        label="Standalone",
-        errors=errors,
-        check=check,
-    )
-
-    _validate_xml_file(
-        path=runner_xml,
-        expected_stl_reference=runner_stl_reference,
-        resolve_base=CASE_DIR,
-        label="Runner",
-        errors=errors,
-        check=check,
-    )
+    # XML well-formedness.
+    for xml_path in (standalone_xml, runner_xml):
+        try:
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            check(root.tag == "case", f"{xml_path.name} root tag is <case>")
+        except ET.ParseError as exc:
+            check(False, f"{xml_path.name} XML parse error: {exc}")
 
     return {
         "status": "pass" if not errors else "fail",
@@ -1560,106 +1314,94 @@ def _validate_case(
 
 
 def _print_summary(summary: dict) -> None:
-    geometry = summary["geometry"]
-    bounds = summary["bounds"]
-    validation = summary["validation"]
-    gap = summary["reservoir_vertical_gap"]
-
     print("=" * 78)
-    print("HADR_TerrainChouldari generated case summary")
+    print("HADR_TerrainChouldari redesigned terrain breach summary")
     print("=" * 78)
 
     print(f"Case name: {summary['case_name']}")
-    print(f"Case status: {summary['status']}")
-    print(f"Validation status: {validation['status']}")
-    print(f"Validation checks passed: {validation['checks_passed']}")
+    print(f"Validation status: {summary['validation']['status']}")
+    print(f"Validation checks passed: {summary['validation']['checks_passed']}")
+
+    sd_explicit = summary.get("simulation_domain_explicit", False)
+    sd_pointmin = summary.get("simulation_domain_pointmin")
+    sd_pointmax = summary.get("simulation_domain_pointmax")
+    sd_default_free = summary.get("simulation_domain_default_free", False)
+
+    print(f"Simulation domain explicit: {sd_explicit}")
+
+    if sd_pointmin:
+        print(
+            "Simulation domain pointmin: "
+            f"({_fmt(sd_pointmin[0])}, {_fmt(sd_pointmin[1])}, {_fmt(sd_pointmin[2])})"
+        )
+    else:
+        print("Simulation domain pointmin: None")
+
+    if sd_pointmax:
+        print(
+            "Simulation domain pointmax: "
+            f"({_fmt(sd_pointmax[0])}, {_fmt(sd_pointmax[1])}, {_fmt(sd_pointmax[2])})"
+        )
+    else:
+        print("Simulation domain pointmax: None")
+
+    if sd_default_free:
+        print("Simulation domain contains no 'default' values.")
+    else:
+        print("Simulation domain still contains invalid or default values.")
+
     print("DualSPHysics run attempted: False")
     print()
 
-    print("Terrain STL bounds:")
-    terrain_bounds = bounds["terrain_stl"]
-    print(f"  x: {_fmt(terrain_bounds['x0'])} to {_fmt(terrain_bounds['x1'])}")
-    print(f"  y: {_fmt(terrain_bounds['y0'])} to {_fmt(terrain_bounds['y1'])}")
-    print(f"  z: {_fmt(terrain_bounds['z0'])} to {_fmt(terrain_bounds['z1'])}")
-    print(f"  bounds source: {validation.get('terrain_stl_bounds_source', 'unknown')}")
-    print()
-
-    print("Simulation domain:")
-    pointmin = bounds["pointmin"]
-    pointmax = bounds["pointmax"]
-    print(f"  pointmin: x={_fmt(pointmin[0])}, y={_fmt(pointmin[1])}, z={_fmt(pointmin[2])}")
-    print(f"  pointmax: x={_fmt(pointmax[0])}, y={_fmt(pointmax[1])}, z={_fmt(pointmax[2])}")
-    print()
-
-    print("Dam position:")
-    print(f"  x: {_fmt(geometry['dam_x'])}")
-    print(f"  y: {_fmt(geometry['dam_y'])}")
-    print(f"  z: {_fmt(geometry['dam_z'])}")
-    print(f"  coordinate source: {geometry['dam_coordinate_source']}")
-    print()
-
+    upstream = summary["upstream"]
     print("Upstream estimate:")
-    print(f"  axis: {geometry['upstream_axis']}")
-    print(f"  sign: {geometry['upstream_sign']:+.0f}")
-    print(f"  method: {geometry['upstream_method']}")
-    print(f"  points used: {geometry['upstream_points']}")
-    print(f"  mean elevation: {_fmt(geometry['upstream_mean_elevation'])}")
+    print(f"  flow axis: {upstream['flow_axis']}")
+    print(f"  upstream sign: {upstream['upstream_sign']:+.0f}")
+    print(f"  method: {upstream['method']}")
     print()
 
-    reservoir = bounds["reservoir"]
+    dam = summary["dam"]
+    print("Dam:")
+    print(f"  center: x={_fmt(dam['center_x'])}, y={_fmt(dam['center_y'])}, z={_fmt(dam['center_z'])}")
+    print(f"  centerline endpoints: {dam['centerline_endpoints']}")
+    print(f"  span: {_fmt(dam['span_start'])} to {_fmt(dam['span_end'])}")
+    print(f"  thickness: {_fmt(dam['thickness'])}")
+    print(f"  common crest_z: {_fmt(dam['crest_z'])}")
+    print(f"  actual wall z1 min/max: {_fmt(dam['wall_z1_min'])} to {_fmt(dam['wall_z1_max'])}")
+    print(f"  wall bottom range: {_fmt(dam['wall_bottom_min'])} to {_fmt(dam['wall_bottom_max'])}")
+    print(f"  local terrain range: {_fmt(dam['local_terrain_min'])} to {_fmt(dam['local_terrain_max'])}")
+    print(f"  fixed left width: {_fmt(dam['fixed_left_width'])}")
+    print(f"  fixed right width: {_fmt(dam['fixed_right_width'])}")
+    print(f"  fixed segment count: {dam['fixed_segment_count']}")
+    print()
+
+    reservoir = summary["reservoir"]
     print("Reservoir:")
-    print(f"  x0 x1: {_fmt(reservoir['x0'])} {_fmt(reservoir['x1'])}")
-    print(f"  y0 y1: {_fmt(reservoir['y0'])} {_fmt(reservoir['y1'])}")
-    print(f"  base_z top_z: {_fmt(reservoir['base_z'])} {_fmt(reservoir['top_z'])}")
-    print(f"  depth: {_fmt(geometry['reservoir_depth'])}")
-    print(f"  local terrain points: {geometry['reservoir_terrain_points']}")
-    print(f"  local terrain min: {_fmt(geometry['reservoir_terrain_min_z'])}")
-    print(f"  local terrain mean: {_fmt(geometry['reservoir_terrain_mean_z'])}")
-    print(f"  local terrain max: {_fmt(geometry['reservoir_terrain_max_z'])}")
+    print(f"  bounds x: {_fmt(reservoir['x_min'])} to {_fmt(reservoir['x_max'])}")
+    print(f"  bounds y: {_fmt(reservoir['y_min'])} to {_fmt(reservoir['y_max'])}")
+    print(f"  bounds z: {_fmt(reservoir['z_min'])} to {_fmt(reservoir['z_max'])}")
+    print(f"  common water_surface_z: {_fmt(reservoir['water_surface_z'])}")
+    print(f"  actual fluid z1 min/max: {_fmt(reservoir['fluid_z1_min'])} to {_fmt(reservoir['fluid_z1_max'])}")
+    print(f"  minimum water depth: {_fmt(reservoir['water_depth_min'])}")
+    print(f"  maximum water depth: {_fmt(reservoir['water_depth_max'])}")
+    print(f"  fluid segment count: {reservoir['fluid_segment_count']}")
     print()
 
-    print("Reservoir vertical gap:")
-    print(f"  reservoir base: {_fmt(gap['reservoir_base_z'])}")
-    print(f"  gap above local terrain max: {_fmt(gap['gap_above_local_max'])}")
-    print(f"  gap above local terrain mean: {_fmt(gap['gap_above_local_mean'])}")
-    print(f"  gap above local terrain min: {_fmt(gap['gap_above_local_min'])}")
-    print(f"  note: {gap['note']}")
+    breach = summary["breach"]
+    print("Breach:")
+    print(f"  enabled: {breach['enabled']}")
+    if breach["enabled"]:
+        print(f"  center: {_fmt(breach['center'])}")
+        print(f"  width: {_fmt(breach['width'])}")
+        print(f"  breach time: {_fmt(breach['breach_time'])}")
+        print(f"  lift duration: {_fmt(breach['lift_duration'])}")
+        print(f"  extra lift above crest: {_fmt(breach['extra_lift_above_crest'])}")
+        print(f"  actual gate lift: {_fmt(breach['actual_gate_lift'])}")
+        print(f"  gate initial Z: {_fmt(breach['gate_initial_z'])}")
+        print(f"  gate final Z: {_fmt(breach['gate_final_z'])}")
+        print(f"  gate final top Z: {_fmt(breach['gate_top_final_z'])}")
+        print(f"  motion file: {breach['motion_file']}")
     print()
-
-    wall = bounds.get("wall")
-    if wall is None:
-        print("Test dam wall: disabled")
-    else:
-        print("Test dam wall:")
-        print(f"  x0 x1: {_fmt(wall['x0'])} {_fmt(wall['x1'])}")
-        print(f"  y0 y1: {_fmt(wall['y0'])} {_fmt(wall['y1'])}")
-        print(f"  base_z top_z: {_fmt(wall['base_z'])} {_fmt(wall['top_z'])}")
-        print("  note: temporary experimental containment wall only")
-    print()
-
-    breach = summary.get("breach")
-    if breach is not None:
-        print("Breach:")
-        print(f"  enabled: {breach['enabled']}")
-
-        if breach["enabled"]:
-            print(f"  breach time: {_fmt(breach['breach_time'])}")
-            print(f"  lift duration: {_fmt(breach['lift_duration'])}")
-            print(f"  lift distance: {_fmt(breach['lift_distance'])}")
-            print(f"  motion steps: {breach['motion_steps']}")
-            print(f"  gate mk: {breach['gate_mk']}")
-            print(f"  gate initial X: {_fmt(breach['gate_initial_x'])}")
-            print(f"  gate initial Y: {_fmt(breach['gate_initial_y'])}")
-            print(f"  gate initial Z: {_fmt(breach['gate_initial_z'])}")
-            print(f"  gate final Z: {_fmt(breach['gate_final_z'])}")
-            print(f"  gate final top Z: {_fmt(breach['gate_final_top_z'])}")
-            print(f"  motion file: {breach['motion_file']}")
-            print(f"  motion duration: {_fmt(breach['motion_duration'])}")
-        else:
-            print("  motion file: None")
-
-        print(f"  note: {breach['note']}")
-        print()
 
     print("Outputs:")
     outputs = summary["outputs"]
@@ -1668,12 +1410,12 @@ def _print_summary(summary: dict) -> None:
     print(f"  summary JSON: {outputs['summary_json']}")
     print()
 
-    if validation["errors"]:
+    if summary["validation"]["errors"]:
         print("Validation errors:")
-        for error in validation["errors"]:
+        for error in summary["validation"]["errors"]:
             print(f"  ERROR: {error}")
     else:
-        print("Validation passed. No geometry or XML validation errors detected.")
+        print("Validation passed. No geometry validation errors detected.")
 
     print()
     print("Next step: inspect this summary. Do NOT run DualSPHysics until approved.")
@@ -1687,66 +1429,13 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
 
     case_name = str(cfg.get("case_name", "HADR_TerrainChouldari"))
 
-    particle_spacing = _positive(cfg, "particle_spacing")
-    simulation_time = _positive(cfg, "simulation_time")
-    time_out = _positive(cfg, "time_out")
-
-    water_depth = _positive(cfg, "reservoir_water_depth")
-    reservoir_length = _positive(cfg, "reservoir_length")
-    reservoir_width = _positive(cfg, "reservoir_width")
-    reservoir_offset = _positive(cfg, "reservoir_offset_from_dam")
-    reservoir_base_clearance = _non_negative(
-        cfg, "reservoir_base_clearance", 0.02
-    )
-
-    upstream_radius = _positive(cfg, "upstream_search_radius")
-    upstream_inner_radius = _non_negative(cfg, "upstream_inner_radius", 1.0)
+    particle_spacing = _positive(cfg, "particle_spacing", 0.10)
+    simulation_time = _positive(cfg, "simulation_time", 0.75)
+    time_out = _positive(cfg, "time_out", 0.05)
 
     domain_margin_xy = _non_negative(cfg, "domain_margin_xy", 1.0)
     domain_margin_z_bottom = _non_negative(cfg, "domain_margin_z_bottom", 0.5)
     domain_margin_z_top = _non_negative(cfg, "domain_margin_z_top", 1.0)
-
-    wall_enabled = bool(cfg.get("test_dam_wall", True))
-    wall_thickness = (
-        _positive(cfg, "test_dam_wall_thickness") if wall_enabled else None
-    )
-    wall_side_margin = _non_negative(cfg, "test_dam_wall_side_margin", 0.5)
-    wall_base_clearance = _non_negative(cfg, "test_dam_wall_base_clearance", 0.2)
-    wall_top_clearance = _non_negative(cfg, "test_dam_wall_top_clearance", 0.2)
-
-    breach_enabled_raw = cfg.get("breach_enabled", False)
-    if not isinstance(breach_enabled_raw, bool):
-        raise TerrainCaseError("breach_enabled must be a boolean")
-
-    breach_enabled = breach_enabled_raw
-
-    if breach_enabled:
-        breach_time = _non_negative(cfg, "breach_time", 0.0)
-        breach_lift_duration = _positive(cfg, "breach_lift_duration")
-        breach_lift_distance = _positive(cfg, "breach_lift_distance")
-
-        try:
-            breach_motion_steps = int(cfg.get("breach_motion_steps", 50))
-        except (TypeError, ValueError) as exc:
-            raise TerrainCaseError("breach_motion_steps must be an integer") from exc
-
-        if breach_motion_steps <= 0:
-            raise TerrainCaseError("breach_motion_steps must be positive")
-
-        if not wall_enabled:
-            raise TerrainCaseError(
-                "test_dam_wall must be true when breach_enabled is true"
-            )
-
-        if breach_time + breach_lift_duration > simulation_time + 1e-6:
-            raise TerrainCaseError(
-                "breach_time + breach_lift_duration must be <= simulation_time"
-            )
-    else:
-        breach_time = 0.0
-        breach_lift_duration = None
-        breach_lift_distance = None
-        breach_motion_steps = None
 
     terrain = _load_terrain(cfg)
 
@@ -1765,370 +1454,379 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
     terrain_z_min = float(np.min(z))
     terrain_z_max = float(np.max(z))
 
+    dam_search_radius = float(cfg.get("dam_search_radius", 8.0))
+
     force_axis = cfg.get("force_upstream_axis")
     force_sign = cfg.get("force_upstream_sign")
 
     if force_axis in {"x", "y"}:
-        axis = str(force_axis)
-        sign = -1.0 if force_sign is not None and float(force_sign) < 0 else 1.0
-
-        if axis == "x":
-            upstream_vector = (sign, 0.0)
-        else:
-            upstream_vector = (0.0, sign)
-
+        flow_axis = str(force_axis)
+        upstream_sign = -1.0 if force_sign is not None and float(force_sign) < 0 else 1.0
         upstream_method = "forced-by-config"
-        upstream_points = 0
-        upstream_mean_elevation = None
     else:
-        default_direction = (
-            float(cfg.get("fallback_upstream_x", 1.0)),
-            float(cfg.get("fallback_upstream_y", 0.0)),
+        flow_axis, upstream_sign, upstream_method = _estimate_upstream_axis(
+            x, y, z, dam_x, dam_y, dam_search_radius,
         )
 
-        upstream_vector, upstream_method, upstream_points, upstream_mean_elevation = (
-            _estimate_upstream_direction(
-                x=x,
-                y=y,
-                z=z,
+    span_rel_min, span_rel_max = _estimate_dam_span(
+        x, y, z, dam_x, dam_y, flow_axis, cfg, particle_spacing,
+    )
+
+    if flow_axis == "x":
+        dam_axis_center = dam_y
+        endpoints = [
+            [dam_x, dam_y + span_rel_min],
+            [dam_x, dam_y + span_rel_max],
+        ]
+    else:
+        dam_axis_center = dam_x
+        endpoints = [
+            [dam_x + span_rel_min, dam_y],
+            [dam_x + span_rel_max, dam_y],
+        ]
+
+    span_start = dam_axis_center + span_rel_min
+    span_end = dam_axis_center + span_rel_max
+
+    local_stats = _cell_stats(
+        x, y, z,
+        dam_x - dam_search_radius, dam_x + dam_search_radius,
+        dam_y - dam_search_radius, dam_y + dam_search_radius,
+    )
+
+    local_terrain_min = local_stats["min"] if local_stats else terrain_z_min
+    local_terrain_max = local_stats["max"] if local_stats else terrain_z_max
+
+    center_stats = _cell_stats(
+        x, y, z,
+        dam_x - max(particle_spacing, 0.25),
+        dam_x + max(particle_spacing, 0.25),
+        dam_y - max(particle_spacing, 0.25),
+        dam_y + max(particle_spacing, 0.25),
+    )
+
+    dam_center_z = center_stats["median"] if center_stats else dam_z
+
+    dam_thickness = _positive(cfg, "dam_thickness", 0.30)
+    dam_crest_height = _positive(cfg, "dam_crest_height", 0.60)
+    dam_embedment = _non_negative(cfg, "dam_embedment", 0.10)
+    dam_segment_length = _positive(cfg, "dam_segment_length", 0.50)
+
+    # Common dam crest elevation derived from dam center terrain reference.
+    dam_crest_z = dam_center_z + dam_crest_height
+
+    breach_enabled_cfg = bool(cfg.get("breach_enabled", True))
+    breach_width_cfg = _non_negative(cfg, "breach_width", 1.0)
+    breach_time = _non_negative(cfg, "breach_time", 0.25)
+    breach_lift_duration = _positive(cfg, "breach_lift_duration", 0.30)
+    breach_lift_distance_extra = _non_negative(cfg, "breach_lift_distance", 0.50)
+    breach_motion_steps = int(cfg.get("breach_motion_steps", 50))
+
+    if breach_motion_steps <= 0:
+        raise TerrainCaseError("breach_motion_steps must be positive")
+
+    if breach_time + breach_lift_duration > simulation_time + 1e-6:
+        raise TerrainCaseError(
+            "breach_time + breach_lift_duration must be <= simulation_time"
+        )
+
+    span_width = span_end - span_start
+    minimum_side_width = max(0.25, 2.0 * particle_spacing)
+    maximum_breach_width = max(0.10, span_width - 2.0 * minimum_side_width)
+
+    breach_enabled = breach_enabled_cfg
+    breach_width = min(max(breach_width_cfg, 0.0), maximum_breach_width)
+
+    if breach_enabled and breach_width <= 1e-3:
+        breach_enabled = False
+
+    breach_center = dam_axis_center
+    breach_start = breach_center - breach_width / 2.0
+    breach_end = breach_center + breach_width / 2.0
+
+    fixed_left_width = breach_start - span_start
+    fixed_right_width = span_end - breach_end
+
+    if not breach_enabled:
+        breach_width = 0.0
+        breach_start = breach_center
+        breach_end = breach_center
+        fixed_left_width = span_width / 2.0
+        fixed_right_width = span_width / 2.0
+
+    fixed_boxes: list[WallBox] = []
+
+    if breach_enabled:
+        if fixed_left_width > 1e-3:
+            fixed_boxes.extend(
+                _make_wall_boxes(
+                    flow_axis=flow_axis,
+                    dam_x=dam_x,
+                    dam_y=dam_y,
+                    thickness=dam_thickness,
+                    interval_start=span_start,
+                    interval_end=breach_start,
+                    segment_length=dam_segment_length,
+                    x=x, y=y, z=z,
+                    embedment=dam_embedment,
+                    common_crest_z=dam_crest_z,
+                    default_ground_z=dam_center_z,
+                    kind="fixed",
+                )
+            )
+
+        if fixed_right_width > 1e-3:
+            fixed_boxes.extend(
+                _make_wall_boxes(
+                    flow_axis=flow_axis,
+                    dam_x=dam_x,
+                    dam_y=dam_y,
+                    thickness=dam_thickness,
+                    interval_start=breach_end,
+                    interval_end=span_end,
+                    segment_length=dam_segment_length,
+                    x=x, y=y, z=z,
+                    embedment=dam_embedment,
+                    common_crest_z=dam_crest_z,
+                    default_ground_z=dam_center_z,
+                    kind="fixed",
+                )
+            )
+
+        breach_boxes = _make_wall_boxes(
+            flow_axis=flow_axis,
+            dam_x=dam_x,
+            dam_y=dam_y,
+            thickness=dam_thickness,
+            interval_start=breach_start,
+            interval_end=breach_end,
+            segment_length=max(breach_width, 0.1),
+            x=x, y=y, z=z,
+            embedment=dam_embedment,
+            common_crest_z=dam_crest_z,
+            default_ground_z=dam_center_z,
+            kind="breach",
+        )
+
+        breach_box = breach_boxes[0] if breach_boxes else None
+    else:
+        fixed_boxes.extend(
+            _make_wall_boxes(
+                flow_axis=flow_axis,
                 dam_x=dam_x,
                 dam_y=dam_y,
-                radius=upstream_radius,
-                inner_radius=upstream_inner_radius,
-                default_direction=default_direction,
+                thickness=dam_thickness,
+                interval_start=span_start,
+                interval_end=span_end,
+                segment_length=dam_segment_length,
+                x=x, y=y, z=z,
+                embedment=dam_embedment,
+                common_crest_z=dam_crest_z,
+                default_ground_z=dam_center_z,
+                kind="fixed",
             )
         )
+        breach_box = None
 
-        ux, uy = upstream_vector
-
-        if abs(ux) >= abs(uy):
-            axis = "x"
-            sign = 1.0 if ux >= 0.0 else -1.0
-        else:
-            axis = "y"
-            sign = 1.0 if uy >= 0.0 else -1.0
-
-    minimum_offset = reservoir_length / 2.0
-    if wall_enabled and wall_thickness is not None:
-        minimum_offset += wall_thickness
-
-    minimum_offset += 2.0 * particle_spacing
-    reservoir_offset = max(reservoir_offset, minimum_offset)
-
-    edge_margin = max(2.0 * particle_spacing, 0.5)
-
-    (
-        reservoir_center_x,
-        reservoir_center_y,
-        reservoir_x0,
-        reservoir_x1,
-        reservoir_y0,
-        reservoir_y1,
-    ) = _reservoir_footprint(
-        dam_x=dam_x,
-        dam_y=dam_y,
-        axis=axis,
-        sign=sign,
-        offset=reservoir_offset,
-        length=reservoir_length,
-        width=reservoir_width,
-        terrain_bounds=(
-            terrain_x_min,
-            terrain_x_max,
-            terrain_y_min,
-            terrain_y_max,
-        ),
-        edge_margin=edge_margin,
-    )
-
-    reservoir_stats = _box_stats(
-        x,
-        y,
-        z,
-        reservoir_x0,
-        reservoir_x1,
-        reservoir_y0,
-        reservoir_y1,
-    )
-
-    if reservoir_stats is None:
-        distances = np.hypot(x - reservoir_center_x, y - reservoir_center_y)
-        selected = distances <= max(2.0 * particle_spacing, 2.0)
-
-        if np.any(selected):
-            values = z[selected]
-            reservoir_stats = {
-                "count": int(selected.sum()),
-                "min": float(np.min(values)),
-                "max": float(np.max(values)),
-                "mean": float(np.mean(values)),
-            }
-
-    if reservoir_stats is None:
-        base_terrain_z = dam_z
-        reservoir_terrain_points = 0
-        reservoir_terrain_min_z = None
-        reservoir_terrain_max_z = None
-        reservoir_terrain_mean_z = None
-    else:
-        base_terrain_z = reservoir_stats["max"]
-        reservoir_terrain_points = reservoir_stats["count"]
-        reservoir_terrain_min_z = reservoir_stats["min"]
-        reservoir_terrain_max_z = reservoir_stats["max"]
-        reservoir_terrain_mean_z = reservoir_stats["mean"]
-
-    reservoir_base_z = base_terrain_z + reservoir_base_clearance
-    reservoir_top_z = reservoir_base_z + water_depth
-
-    wall_x0 = wall_x1 = wall_y0 = wall_y1 = None
-    wall_base_z = wall_top_z = None
-
-    if wall_enabled and wall_thickness is not None:
-        if axis == "x":
-            wall_x0 = dam_x - wall_thickness / 2.0
-            wall_x1 = dam_x + wall_thickness / 2.0
-            wall_y0 = min(reservoir_y0, dam_y) - wall_side_margin
-            wall_y1 = max(reservoir_y1, dam_y) + wall_side_margin
-        else:
-            wall_y0 = dam_y - wall_thickness / 2.0
-            wall_y1 = dam_y + wall_thickness / 2.0
-            wall_x0 = min(reservoir_x0, dam_x) - wall_side_margin
-            wall_x1 = max(reservoir_x1, dam_x) + wall_side_margin
-
-        wall_stats = _box_stats(
-            x,
-            y,
-            z,
-            wall_x0 - wall_side_margin,
-            wall_x1 + wall_side_margin,
-            wall_y0 - wall_side_margin,
-            wall_y1 + wall_side_margin,
-        )
-
-        local_min_candidates = [dam_z]
-
-        if wall_stats is not None:
-            local_min_candidates.append(wall_stats["min"])
-
-        if reservoir_terrain_min_z is not None:
-            local_min_candidates.append(reservoir_terrain_min_z)
-
-        wall_base_z = min(local_min_candidates) - wall_base_clearance
-        wall_top_z = reservoir_top_z + wall_top_clearance
-
-        minimum_wall_height = 2.0 * particle_spacing
-        wall_height = max(wall_top_z - wall_base_z, minimum_wall_height)
-        wall_top_z = wall_base_z + wall_height
-
-    motion_path = CASE_DIR / f"{case_name}_gate_motion.txt"
-
-    motion_duration = None
     gate_initial_z = None
     gate_final_z = None
-    gate_final_top_z = None
+    gate_top_final_z = None
+    actual_gate_lift = None
 
-    breach_domain_headroom = max(domain_margin_z_top, 0.2)
+    if breach_enabled and breach_box is not None:
+        gate_height = breach_box.z1 - breach_box.z0
+        actual_gate_lift = gate_height + breach_lift_distance_extra
+        gate_initial_z = breach_box.z0
+        gate_final_z = breach_box.z0 + actual_gate_lift
+        gate_top_final_z = breach_box.z1 + actual_gate_lift
 
-    if (
-        breach_enabled
-        and wall_base_z is not None
-        and wall_top_z is not None
-        and breach_lift_distance is not None
-    ):
-        gate_initial_z = wall_base_z
-        gate_final_z = wall_base_z + breach_lift_distance
-        gate_height = wall_top_z - wall_base_z
-        gate_final_top_z = gate_final_z + gate_height
+    reservoir_length = _positive(cfg, "reservoir_length", 3.0)
+    reservoir_water_depth = _positive(cfg, "reservoir_water_depth", 0.50)
+    reservoir_segments = int(cfg.get("reservoir_segments", 6))
+    fluid_bed_clearance = _non_negative(cfg, "fluid_bed_clearance", 0.02)
 
-    pointmin_x_candidates = [terrain_x_min, reservoir_x0]
-    pointmax_x_candidates = [terrain_x_max, reservoir_x1]
-    pointmin_y_candidates = [terrain_y_min, reservoir_y0]
-    pointmax_y_candidates = [terrain_y_max, reservoir_y1]
-    pointmin_z_candidates = [terrain_z_min, reservoir_base_z]
-    pointmax_z_candidates = [terrain_z_max, reservoir_top_z]
+    if reservoir_segments <= 0:
+        reservoir_segments = 1
 
-    if wall_enabled and None not in (
-        wall_x0,
-        wall_x1,
-        wall_y0,
-        wall_y1,
-        wall_base_z,
-        wall_top_z,
-    ):
-        pointmin_x_candidates.extend([wall_x0, wall_x1])
-        pointmax_x_candidates.extend([wall_x0, wall_x1])
-        pointmin_y_candidates.extend([wall_y0, wall_y1])
-        pointmax_y_candidates.extend([wall_y0, wall_y1])
-        pointmin_z_candidates.append(wall_base_z)
-        pointmax_z_candidates.append(wall_top_z)
-
-    if gate_final_top_z is not None:
-        pointmax_z_candidates.append(
-            gate_final_top_z + breach_domain_headroom
-        )
-
-    pointmin_x = min(pointmin_x_candidates) - domain_margin_xy
-    pointmax_x = max(pointmax_x_candidates) + domain_margin_xy
-    pointmin_y = min(pointmin_y_candidates) - domain_margin_xy
-    pointmax_y = max(pointmax_y_candidates) + domain_margin_xy
-    pointmin_z = min(pointmin_z_candidates) - domain_margin_z_bottom
-    pointmax_z = max(pointmax_z_candidates) + domain_margin_z_top
-
-    geom = TerrainCaseGeometry(
-        scale=terrain["scale"],
-        terrain_samples=int(x.size),
-        terrain_x_min=terrain_x_min,
-        terrain_x_max=terrain_x_max,
-        terrain_y_min=terrain_y_min,
-        terrain_y_max=terrain_y_max,
-        terrain_z_min=terrain_z_min,
-        terrain_z_max=terrain_z_max,
+    reservoir_boxes, common_water_surface_z = _make_reservoir_boxes(
+        flow_axis=flow_axis,
+        upstream_sign=upstream_sign,
         dam_x=dam_x,
         dam_y=dam_y,
-        dam_z=dam_z,
-        dam_nearest_distance=terrain["dam_nearest_distance"],
-        dam_coordinate_source=terrain["dam_coordinate_source"],
-        upstream_x=float(upstream_vector[0]),
-        upstream_y=float(upstream_vector[1]),
-        upstream_axis=axis,
-        upstream_sign=sign,
-        upstream_method=upstream_method,
-        upstream_points=upstream_points,
-        upstream_mean_elevation=upstream_mean_elevation,
-        reservoir_center_x=reservoir_center_x,
-        reservoir_center_y=reservoir_center_y,
-        reservoir_x0=reservoir_x0,
-        reservoir_x1=reservoir_x1,
-        reservoir_y0=reservoir_y0,
-        reservoir_y1=reservoir_y1,
+        thickness=dam_thickness,
+        span_start=span_start,
+        span_end=span_end,
         reservoir_length=reservoir_length,
-        reservoir_width=reservoir_width,
-        reservoir_depth=water_depth,
-        reservoir_base_z=reservoir_base_z,
-        reservoir_top_z=reservoir_top_z,
-        reservoir_terrain_points=reservoir_terrain_points,
-        reservoir_terrain_min_z=reservoir_terrain_min_z,
-        reservoir_terrain_max_z=reservoir_terrain_max_z,
-        reservoir_terrain_mean_z=reservoir_terrain_mean_z,
-        wall_enabled=wall_enabled,
-        wall_thickness=wall_thickness,
-        wall_side_margin=wall_side_margin if wall_enabled else None,
-        wall_x0=wall_x0,
-        wall_x1=wall_x1,
-        wall_y0=wall_y0,
-        wall_y1=wall_y1,
-        wall_base_z=wall_base_z,
-        wall_top_z=wall_top_z,
-        pointmin_x=pointmin_x,
-        pointmin_y=pointmin_y,
-        pointmin_z=pointmin_z,
-        pointmax_x=pointmax_x,
-        pointmax_y=pointmax_y,
-        pointmax_z=pointmax_z,
+        reservoir_segments=reservoir_segments,
+        water_depth=reservoir_water_depth,
+        fluid_bed_clearance=fluid_bed_clearance,
+        particle_spacing=particle_spacing,
+        x=x, y=y, z=z,
+        default_ground_z=dam_center_z,
     )
 
-    stl_source = _resolve_path(cfg["terrain_stl"])
+    reservoir = ReservoirGeometry(boxes=reservoir_boxes)
 
+    if reservoir_boxes:
+        reservoir.x_min = min(box.x0 for box in reservoir_boxes)
+        reservoir.x_max = max(box.x1 for box in reservoir_boxes)
+        reservoir.y_min = min(box.y0 for box in reservoir_boxes)
+        reservoir.y_max = max(box.y1 for box in reservoir_boxes)
+        reservoir.z_min = min(box.z0 for box in reservoir_boxes)
+        reservoir.z_max = max(box.z1 for box in reservoir_boxes)
+        reservoir.water_surface_z = common_water_surface_z
+        reservoir.water_depth_min = min(box.water_depth for box in reservoir_boxes)
+        reservoir.water_depth_max = max(box.water_depth for box in reservoir_boxes)
+
+    wall_bottom_values = [box.z0 for box in fixed_boxes]
+    wall_z1_values = [box.z1 for box in fixed_boxes]
+    if breach_box is not None:
+        wall_bottom_values.append(breach_box.z0)
+        wall_z1_values.append(breach_box.z1)
+
+    fluid_z1_values = [box.z1 for box in reservoir_boxes]
+
+    dam_geometry = DamGeometry(
+        flow_axis=flow_axis,
+        upstream_sign=upstream_sign,
+        upstream_method=upstream_method,
+        center_x=dam_x,
+        center_y=dam_y,
+        center_z=dam_center_z,
+        span_start=span_start,
+        span_end=span_end,
+        endpoints=endpoints,
+        thickness=dam_thickness,
+        crest_z=dam_crest_z,
+        wall_bottom_min=min(wall_bottom_values) if wall_bottom_values else None,
+        wall_bottom_max=max(wall_bottom_values) if wall_bottom_values else None,
+        local_terrain_min=local_terrain_min,
+        local_terrain_max=local_terrain_max,
+        fixed_boxes=fixed_boxes,
+        breach_box=breach_box,
+        breach_center=breach_center if breach_enabled else None,
+        breach_width=breach_width if breach_enabled else None,
+        fixed_left_width=fixed_left_width if breach_enabled else None,
+        fixed_right_width=fixed_right_width if breach_enabled else None,
+        gate_initial_z=gate_initial_z,
+        gate_final_z=gate_final_z,
+        gate_top_final_z=gate_top_final_z,
+        gate_lift_distance=actual_gate_lift,
+    )
+
+    # Domain bounds.
+    x_min_candidates = [terrain_x_min]
+    x_max_candidates = [terrain_x_max]
+    y_min_candidates = [terrain_y_min]
+    y_max_candidates = [terrain_y_max]
+    z_min_candidates = [terrain_z_min]
+    z_max_candidates = [terrain_z_max]
+
+    for box in fixed_boxes:
+        x_min_candidates.append(box.x0)
+        x_max_candidates.append(box.x1)
+        y_min_candidates.append(box.y0)
+        y_max_candidates.append(box.y1)
+        z_min_candidates.append(box.z0)
+        z_max_candidates.append(box.z1)
+
+    if breach_box is not None:
+        x_min_candidates.append(breach_box.x0)
+        x_max_candidates.append(breach_box.x1)
+        y_min_candidates.append(breach_box.y0)
+        y_max_candidates.append(breach_box.y1)
+        z_min_candidates.append(breach_box.z0)
+        z_max_candidates.append(breach_box.z1)
+        if gate_top_final_z is not None:
+            z_max_candidates.append(gate_top_final_z)
+
+    for box in reservoir_boxes:
+        x_min_candidates.append(box.x0)
+        x_max_candidates.append(box.x1)
+        y_min_candidates.append(box.y0)
+        y_max_candidates.append(box.y1)
+        z_min_candidates.append(box.z0)
+        z_max_candidates.append(box.z1)
+
+    pointmin = (
+        min(x_min_candidates) - domain_margin_xy,
+        min(y_min_candidates) - domain_margin_xy,
+        min(z_min_candidates) - domain_margin_z_bottom,
+    )
+
+    pointmax = (
+        max(x_max_candidates) + domain_margin_xy,
+        max(y_max_candidates) + domain_margin_xy,
+        max(z_max_candidates) + domain_margin_z_top,
+    )
+
+    
+
+    # STL handling.
+    stl_source = _resolve_path(cfg["terrain_stl"])
     if not stl_source.exists():
         raise TerrainCaseError(f"Terrain STL not found: {stl_source}")
 
-    # Keep the existing terrain/ copy for reference.
     terrain_dir = CASE_DIR / str(cfg.get("terrain_output_subdir", "terrain"))
     terrain_dir.mkdir(parents=True, exist_ok=True)
 
     terrain_stl_copy = terrain_dir / stl_source.name
-
     if stl_source.resolve() != terrain_stl_copy.resolve():
         shutil.copyfile(stl_source, terrain_stl_copy)
 
-    # GenCase copies referenced external files more reliably when they are
-    # located beside the case-definition XML.
-    #
-    # For the standalone case, reference the STL by filename only.
     stl_copy = CASE_DIR / stl_source.name
-
     if terrain_stl_copy.resolve() != stl_copy.resolve():
         shutil.copyfile(terrain_stl_copy, stl_copy)
 
     standalone_stl_reference = stl_copy.name
     runner_stl_reference = stl_copy.resolve().as_posix()
 
-    parsed_stl_bounds = _parse_ascii_stl_bounds(stl_copy)
-    if parsed_stl_bounds is None:
-        terrain_stl_bounds = {
-            "x0": terrain_x_min,
-            "x1": terrain_x_max,
-            "y0": terrain_y_min,
-            "y1": terrain_y_max,
-            "z0": terrain_z_min,
-            "z1": terrain_z_max,
-        }
-        terrain_stl_bounds_source = "npz_bounds_assumed_for_stl"
-    else:
-        terrain_stl_bounds = parsed_stl_bounds
-        terrain_stl_bounds_source = "ascii_stl_parsed"
+    # Motion file.
+    motion_path = CASE_DIR / f"{case_name}_gate_motion.txt"
+    motion_duration = None
 
-    standalone_motion_reference = None
-    runner_motion_reference = None
-    simulation_posmax_z = None
-
-    if breach_enabled:
-        if (
-            wall_x0 is None
-            or wall_y0 is None
-            or wall_base_z is None
-            or breach_lift_duration is None
-            or breach_lift_distance is None
-            or breach_motion_steps is None
-        ):
-            raise TerrainCaseError(
-                "Breach gate geometry is not available for motion generation"
-            )
-
+    if breach_enabled and breach_box is not None and actual_gate_lift is not None:
         motion_duration = _write_gate_motion(
             motion_path=motion_path,
-            initial_x=wall_x0,
-            initial_y=wall_y0,
-            initial_z=wall_base_z,
+            initial_x=breach_box.x0,
+            initial_y=breach_box.y0,
+            initial_z=breach_box.z0,
             breach_time=breach_time,
             simulation_time=simulation_time,
             lift_duration=breach_lift_duration,
-            lift_distance=breach_lift_distance,
+            lift_distance=actual_gate_lift,
             motion_steps=breach_motion_steps,
         )
-
         standalone_motion_reference = motion_path.name
         runner_motion_reference = motion_path.resolve().as_posix()
-
-        simulation_posmax_z = geom.pointmax_z
-
     else:
         if motion_path.exists():
             motion_path.unlink()
+        standalone_motion_reference = None
+        runner_motion_reference = None
 
     standalone_xml = _build_xml(
-        stl_file=standalone_stl_reference,
-        motion_file=standalone_motion_reference,
         cfg=cfg,
-        geom=geom,
-        breach_enabled=breach_enabled,
+        geom=dam_geometry,
+        reservoir=reservoir,
+        pointmin=pointmin,
+        pointmax=pointmax,
+        stl_reference=standalone_stl_reference,
+        motion_reference=standalone_motion_reference,
         motion_duration=motion_duration,
-        simulation_posmax_z=simulation_posmax_z,
     )
-
     runner_xml = _build_xml(
-        stl_file=runner_stl_reference,
-        motion_file=runner_motion_reference,
         cfg=cfg,
-        geom=geom,
-        breach_enabled=breach_enabled,
+        geom=dam_geometry,
+        reservoir=reservoir,
+        pointmin=pointmin,
+        pointmax=pointmax,
+        stl_reference=runner_stl_reference,
+        motion_reference=runner_motion_reference,
         motion_duration=motion_duration,
-        simulation_posmax_z=simulation_posmax_z,
     )
 
-    definition_name = str(
-        cfg.get("definition_name", f"{case_name}_Def.xml")
-    )
+    definition_name = str(cfg.get("definition_name", f"{case_name}_Def.xml"))
     runner_definition_name = str(
         cfg.get("runner_definition_name", f"{case_name}_runner_Def.xml")
     )
@@ -2141,99 +1839,108 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
     definition_path.write_text(standalone_xml, encoding="utf-8")
     runner_definition_path.write_text(runner_xml, encoding="utf-8")
 
-    validation = _validate_case(
-        cfg=cfg,
-        geom=geom,
-        terrain_stl_bounds=terrain_stl_bounds,
-        stl_copy=stl_copy,
-        standalone_xml=definition_path,
-        runner_xml=runner_definition_path,
-        standalone_stl_reference=standalone_stl_reference,
-        runner_stl_reference=runner_stl_reference,
-    )
-    validation["terrain_stl_bounds_source"] = terrain_stl_bounds_source
+    # --- Simulation Domain Validation ---
+    wall_boxes_all = list(fixed_boxes)
+    if breach_box is not None:
+        wall_boxes_all.append(breach_box)
 
-    breach_validation = _validate_breach(
+    # Build dictionary representations for bounds calculation
+    wall_boxes_dicts = [
+        {"x0": b.x0, "x1": b.x1, "y0": b.y0, "y1": b.y1, "z0": b.z0, "z1": b.z1}
+        for b in wall_boxes_all
+    ]
+    reservoir_boxes_dicts = [
+        {"x0": b.x0, "x1": b.x1, "y0": b.y0, "y1": b.y1, "z0": b.z0, "z1": b.z1}
+        for b in reservoir_boxes
+    ]
+    
+    breach_final_box_dict = None
+    if breach_enabled and breach_box is not None and actual_gate_lift is not None:
+        breach_final_box_dict = {
+            "x0": breach_box.x0, "x1": breach_box.x1,
+            "y0": breach_box.y0, "y1": breach_box.y1,
+            "z0": breach_box.z0 + actual_gate_lift,
+            "z1": breach_box.z1 + actual_gate_lift,
+        }
+
+    terrain_bounds = {
+        "x_min": terrain_x_min,
+        "x_max": terrain_x_max,
+        "y_min": terrain_y_min,
+        "y_max": terrain_y_max,
+        "z_min": terrain_z_min,
+        "z_max": terrain_z_max,
+    }
+
+    required_domain_bounds = {
+        "terrain": terrain_bounds,
+        "reservoir": _bounds_from_boxes(reservoir_boxes_dicts),
+        "dam_breach_initial": _bounds_from_boxes(wall_boxes_dicts),
+        "final_lifted_breach": (
+            _bounds_from_boxes([breach_final_box_dict])
+            if breach_final_box_dict is not None
+            else None
+        ),
+    }
+
+    domain_validation_standalone = _validate_simulation_domain_xml(
+        definition_path,
+        required_domain_bounds,
+    )
+
+    domain_validation_runner = _validate_simulation_domain_xml(
+        runner_definition_path,
+        required_domain_bounds,
+    )
+
+    validation = _validate_geometry(
         cfg=cfg,
-        geom=geom,
+        geom=dam_geometry,
+        reservoir=reservoir,
+        pointmin=pointmin,
+        pointmax=pointmax,
         motion_path=motion_path,
         standalone_xml=definition_path,
         runner_xml=runner_definition_path,
-        standalone_motion_reference=standalone_motion_reference,
-        runner_motion_reference=runner_motion_reference,
         simulation_time=simulation_time,
     )
 
-    validation["checks_passed"] += breach_validation["checks_passed"]
-    validation["errors"].extend(breach_validation["errors"])
+    domain_errors = []
+    domain_errors.extend(domain_validation_standalone.get("errors", []))
+    domain_errors.extend(domain_validation_runner.get("errors", []))
 
-    if breach_validation["errors"]:
+    if domain_errors:
+        validation["errors"].extend(domain_errors)
         validation["status"] = "fail"
 
-    validation["breach_validation"] = breach_validation
+    validation["simulation_domain_standalone"] = domain_validation_standalone
+    validation["simulation_domain_runner"] = domain_validation_runner
 
-    def vertical_gap_value(reference: float | None) -> float | None:
-        if reference is None:
-            return None
-        return reservoir_base_z - reference
+    moving_bounds_initial = None
+    moving_bounds_final = None
 
-    reservoir_vertical_gap = {
-        "reservoir_base_z": reservoir_base_z,
-        "local_terrain_points": reservoir_terrain_points,
-        "local_terrain_min": reservoir_terrain_min_z,
-        "local_terrain_mean": reservoir_terrain_mean_z,
-        "local_terrain_max": reservoir_terrain_max_z,
-        "gap_above_local_min": vertical_gap_value(reservoir_terrain_min_z),
-        "gap_above_local_mean": vertical_gap_value(reservoir_terrain_mean_z),
-        "gap_above_local_max": vertical_gap_value(reservoir_terrain_max_z),
-        "note": (
-            "Integration-test reservoir base is set above local terrain maximum. "
-            "This is not the final hydraulic water-surface definition."
-        ),
-    }
-
-    wall_bounds = None
-    if geom.wall_enabled:
-        wall_bounds = {
-            "x0": geom.wall_x0,
-            "x1": geom.wall_x1,
-            "y0": geom.wall_y0,
-            "y1": geom.wall_y1,
-            "base_z": geom.wall_base_z,
-            "top_z": geom.wall_top_z,
+    if breach_enabled and breach_box is not None and actual_gate_lift is not None:
+        moving_bounds_initial = {
+            "x0": breach_box.x0, "x1": breach_box.x1,
+            "y0": breach_box.y0, "y1": breach_box.y1,
+            "z0": breach_box.z0, "z1": breach_box.z1,
         }
-
-    breach_summary = {
-        "enabled": breach_enabled,
-        "breach_time": breach_time if breach_enabled else 0.0,
-        "lift_duration": breach_lift_duration,
-        "lift_distance": breach_lift_distance,
-        "motion_steps": breach_motion_steps,
-        "gate_mk": BREACH_GATE_MK if breach_enabled else None,
-        "gate_initial_x": wall_x0 if breach_enabled else None,
-        "gate_initial_y": wall_y0 if breach_enabled else None,
-        "gate_initial_z": gate_initial_z,
-        "gate_final_z": gate_final_z,
-        "gate_final_top_z": gate_final_top_z,
-        "motion_file": str(motion_path) if breach_enabled else None,
-        "motion_duration": motion_duration,
-        "note": (
-            "Prototype breach assumptions only. "
-            "These are not observed Chouldari failure parameters."
-        ),
-    }
+        moving_bounds_final = {
+            "x0": breach_box.x0, "x1": breach_box.x1,
+            "y0": breach_box.y0, "y1": breach_box.y1,
+            "z0": breach_box.z0 + actual_gate_lift,
+            "z1": breach_box.z1 + actual_gate_lift,
+        }
 
     summary = {
         "case_name": case_name,
-        "status": "experimental_integration_test",
+        "status": "experimental_terrain_breach_redesign",
         "limitations": [
             "Terrain source is Copernicus GLO-30 DSM data.",
             "Terrain coordinates are numerically scaled prototype coordinates.",
+            "The dam/reservoir geometry is terrain-anchored but still experimental.",
             "This is not a validated physical flood model.",
             "Hydrological calibration is still required.",
-            "The terrain STL is a surface only; it has no artificial box, bottom, or side walls.",
-            "The temporary test dam wall is only an experimental containment feature.",
-            "Final SIH modelling will combine terrain, hydrological observations, satellite data, SPH/Delft3D comparison, and GIS outputs.",
         ],
         "inputs": {
             "terrain_npz": str(terrain["npz_path"]),
@@ -2245,31 +1952,80 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
             "simulation_time": simulation_time,
             "time_out": time_out,
         },
-        "bounds": {
-            "terrain_stl": terrain_stl_bounds,
-            "pointmin": [
-                geom.pointmin_x,
-                geom.pointmin_y,
-                geom.pointmin_z,
-            ],
-            "pointmax": [
-                geom.pointmax_x,
-                geom.pointmax_y,
-                geom.pointmax_z,
-            ],
-            "reservoir": {
-                "x0": geom.reservoir_x0,
-                "x1": geom.reservoir_x1,
-                "y0": geom.reservoir_y0,
-                "y1": geom.reservoir_y1,
-                "base_z": geom.reservoir_base_z,
-                "top_z": geom.reservoir_top_z,
-            },
-            "wall": wall_bounds,
+        "upstream": {
+            "flow_axis": flow_axis,
+            "upstream_sign": upstream_sign,
+            "method": upstream_method,
         },
-        "reservoir_vertical_gap": reservoir_vertical_gap,
-        "breach": breach_summary,
-        "geometry": asdict(geom),
+        "dam": {
+            "center_x": dam_x,
+            "center_y": dam_y,
+            "center_z": dam_center_z,
+            "centerline_endpoints": endpoints,
+            "span_start": span_start,
+            "span_end": span_end,
+            "thickness": dam_thickness,
+            "crest_z": dam_crest_z,
+            "wall_z1_min": min(wall_z1_values) if wall_z1_values else None,
+            "wall_z1_max": max(wall_z1_values) if wall_z1_values else None,
+            "wall_bottom_min": dam_geometry.wall_bottom_min,
+            "wall_bottom_max": dam_geometry.wall_bottom_max,
+            "local_terrain_min": local_terrain_min,
+            "local_terrain_max": local_terrain_max,
+            "fixed_left_width": fixed_left_width if breach_enabled else None,
+            "fixed_right_width": fixed_right_width if breach_enabled else None,
+            "fixed_segment_count": len(fixed_boxes),
+        },
+        "reservoir": {
+            "x_min": reservoir.x_min,
+            "x_max": reservoir.x_max,
+            "y_min": reservoir.y_min,
+            "y_max": reservoir.y_max,
+            "z_min": reservoir.z_min,
+            "z_max": reservoir.z_max,
+            "water_surface_z": reservoir.water_surface_z,
+            "fluid_z1_min": min(fluid_z1_values) if fluid_z1_values else None,
+            "fluid_z1_max": max(fluid_z1_values) if fluid_z1_values else None,
+            "water_depth_min": reservoir.water_depth_min,
+            "water_depth_max": reservoir.water_depth_max,
+            "fluid_segment_count": len(reservoir_boxes),
+        },
+        "breach": {
+            "enabled": breach_enabled,
+            "center": breach_center if breach_enabled else None,
+            "width": breach_width if breach_enabled else None,
+            "breach_time": breach_time if breach_enabled else None,
+            "lift_duration": breach_lift_duration if breach_enabled else None,
+            "extra_lift_above_crest": breach_lift_distance_extra if breach_enabled else None,
+            "actual_gate_lift": actual_gate_lift,
+            "gate_initial_z": gate_initial_z,
+            "gate_final_z": gate_final_z,
+            "gate_top_final_z": gate_top_final_z,
+            "moving_bounds_initial": moving_bounds_initial,
+            "moving_bounds_final": moving_bounds_final,
+            "motion_file": str(motion_path) if breach_enabled else None,
+            "motion_duration": motion_duration,
+        },
+        "bounds": {
+            "terrain": {
+                "x_min": terrain_x_min, "x_max": terrain_x_max,
+                "y_min": terrain_y_min, "y_max": terrain_y_max,
+                "z_min": terrain_z_min, "z_max": terrain_z_max,
+            },
+            "pointmin": list(pointmin),
+            "pointmax": list(pointmax),
+        },
+        "simulation_domain_explicit": True,
+        "simulation_domain_pointmin": list(pointmin),
+        "simulation_domain_pointmax": list(pointmax),
+        "simulation_domain_default_free": bool(
+            domain_validation_standalone.get("default_free", False)
+            and domain_validation_runner.get("default_free", False)
+        ),
+        "simulation_domain_validation": {
+            "standalone": domain_validation_standalone,
+            "runner": domain_validation_runner,
+        },
         "validation": validation,
         "outputs": {
             "definition_xml": str(definition_path),
@@ -2277,12 +2033,6 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
             "summary_json": str(summary_path),
         },
     }
-
-    if breach_enabled:
-        summary["limitations"].append(
-            "breach_time, breach_lift_duration and breach_lift_distance are prototype assumptions, "
-            "not observed Chouldari failure parameters."
-        )
 
     summary_path.write_text(
         json.dumps(summary, indent=2),

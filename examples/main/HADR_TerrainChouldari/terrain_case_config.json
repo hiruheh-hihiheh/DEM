@@ -10,37 +10,37 @@
   "summary_name": "terrain_case_summary.json",
 
   "particle_spacing": 0.10,
-  "simulation_time": 0.75,
+  "simulation_time": 6,
   "time_out": 0.05,
-
-  "reservoir_water_depth": 0.50,
-  "reservoir_length": 3.0,
-  "reservoir_width": 3.0,
-  "reservoir_offset_from_dam": 3.0,
-  "reservoir_base_clearance": 0.02,
-
-  "upstream_search_radius": 8.0,
-  "upstream_inner_radius": 1.0,
-  "force_upstream_axis": null,
-  "force_upstream_sign": null,
-  "fallback_upstream_x": 1.0,
-  "fallback_upstream_y": 0.0,
-  "fallback_dam_x_sim": 9.6898,
-  "fallback_dam_y_sim": 9.8289,
-
-  "test_dam_wall": true,
-  "test_dam_wall_thickness": 0.30,
-  "test_dam_wall_side_margin": 0.50,
-  "test_dam_wall_base_clearance": 0.20,
-  "test_dam_wall_top_clearance": 0.20,
-
-  "breach_enabled": true,
-  "breach_time": 0.25,
-  "breach_lift_duration": 0.10,
-  "breach_lift_distance": 3.0,
-  "breach_motion_steps": 50,
 
   "domain_margin_xy": 1.0,
   "domain_margin_z_bottom": 0.5,
-  "domain_margin_z_top": 1.0
+  "domain_margin_z_top": 1.0,
+
+  "fallback_dam_x_sim": 9.6898,
+  "fallback_dam_y_sim": 9.8289,
+
+  "force_upstream_axis": null,
+  "force_upstream_sign": null,
+
+  "dam_search_radius": 8.0,
+  "dam_thickness": 0.50,
+  "dam_crest_height": 0.80,
+  "dam_embedment": 0.10,
+  "dam_min_span": 4.0,
+  "dam_max_span": 12.0,
+  "dam_segment_length": 0.50,
+  "dam_valley_threshold": 0.30,
+
+  "reservoir_length": 3.0,
+  "reservoir_min_water_depth": 0.50,
+  "reservoir_segments": 6,
+  "fluid_bed_clearance": 0.20,
+
+  "breach_enabled": true,
+  "breach_width": 1.0,
+  "breach_time": 0.25,
+  "breach_lift_duration": 0.30,
+  "breach_lift_distance": 0.50,
+  "breach_motion_steps": 50
 }

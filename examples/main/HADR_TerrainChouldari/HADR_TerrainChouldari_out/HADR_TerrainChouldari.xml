@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<case app="GenCase v5.4.354.01 (07-04-2025)" date="08-09-2026 14:28:48">
+<case app="GenCase v5.4.354.01 (07-04-2025)" date="08-09-2026 19:30:15">
     <casedef>
         <constantsdef>
             <gravity x="0" y="0" z="-9.81" comment="Gravitational acceleration" units_comment="m/s^2" />
@@ -17,33 +17,86 @@
         <mkconfig boundcount="240" fluidcount="9" />
         <geometry>
             <definition dp="0.100000" units_comment="simulation metres (scaled prototype units)">
-                <pointmin x="-1.000000" y="-1.000000" z="-0.484366" />
-                <pointmax x="28.256620" y="24.953268" z="7.382564" />
+                <pointmin x="-1.000000" y="-1.000000" z="-0.467581" />
+                <pointmax x="28.256620" y="24.953268" z="3.722300" />
             </definition>
             <commands>
                 <mainlist>
                     <setshapemode>dp | bound</setshapemode>
                     <setdrawmode mode="full" />
-                    <!-- Experimental DEM terrain surface -->
-                    <!-- Source: Copernicus GLO-30 DSM -->
-                    <!-- Coordinates are already numerically scaled -->
-                    <!-- Terrain is fixed; experimental breach gate is moving -->
+                    <!-- Real DEM terrain surface remains fixed -->
                     <setmkbound mk="0" />
                     <drawfilestl file="chouldari_sph_terrain.stl" />
-                    <!-- Experimental moving breach gate -->
-                    <!-- Prototype timing only; not observed Chouldari failure data -->
+                    <!-- Terrain-anchored fixed dam segments -->
+                    <setmkbound mk="1" />
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="9.439809" y="7.828936" z="0.681682" />
+                        <size x="0.500000" y="0.500000" z="0.640618" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="9.439809" y="8.328936" z="0.504803" />
+                        <size x="0.500000" y="0.500000" z="0.817497" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="9.439809" y="8.828936" z="0.424677" />
+                        <size x="0.500000" y="0.500000" z="0.897623" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="9.439809" y="10.328936" z="0.328943" />
+                        <size x="0.500000" y="0.500000" z="0.993357" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="9.439809" y="10.828936" z="0.294707" />
+                        <size x="0.500000" y="0.500000" z="1.027593" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="9.439809" y="11.328936" z="0.643824" />
+                        <size x="0.500000" y="0.500000" z="0.678476" />
+                    </drawbox>
+                    <!-- Moving centered breach gate -->
                     <setmkbound mk="200" />
                     <drawbox>
                         <boxfill>solid</boxfill>
-                        <point x="7.689809" y="9.678936" z="0.015634" />
-                        <size x="4.000000" y="0.300000" z="2.366930" />
+                        <point x="9.439809" y="9.328936" z="0.422300" />
+                        <size x="0.500000" y="1.000000" z="0.900000" />
                     </drawbox>
-                    <!-- Simple preliminary reservoir volume -->
+                    <!-- Terrain-following upstream reservoir -->
                     <setmkfluid mk="0" />
                     <drawbox>
                         <boxfill>solid</boxfill>
-                        <point x="8.189809" y="11.328936" z="1.682564" />
-                        <size x="3.000000" y="3.000000" z="0.500000" />
+                        <point x="6.239809" y="7.828936" z="0.832785" />
+                        <size x="3.000000" y="0.666667" z="0.661231" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="6.239809" y="8.495603" z="0.726507" />
+                        <size x="3.000000" y="0.666667" z="0.767509" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="6.239809" y="9.162270" z="0.723800" />
+                        <size x="3.000000" y="0.666667" z="0.770216" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="6.239809" y="9.828936" z="0.724900" />
+                        <size x="3.000000" y="0.666667" z="0.769116" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="6.239809" y="10.495603" z="0.915282" />
+                        <size x="3.000000" y="0.666667" z="0.578734" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="6.239809" y="11.162270" z="1.194016" />
+                        <size x="3.000000" y="0.666667" z="0.300000" />
                     </drawbox>
                 </mainlist>
             </commands>
@@ -51,7 +104,7 @@
         <motion>
             <objreal ref="200">
                 <begin mov="1" start="0" />
-                <mvfile id="1" duration="0.75000000">
+                <mvfile id="1" duration="6.00000000">
                     <file name="HADR_TerrainChouldari_gate_motion.txt" fields="4" fieldtime="0" fieldx="1" fieldy="2" fieldz="3" />
                 </mvfile>
             </objreal>
@@ -76,29 +129,30 @@
             <parameter key="DtFixed" value="0" />
             <parameter key="DtFixedFile" value="NONE" />
             <parameter key="DtAllParticles" value="0" />
-            <parameter key="TimeMax" value="0.750000" />
+            <parameter key="TimeMax" value="6.000000" />
             <parameter key="TimeOut" value="0.050000" />
             <parameter key="PartsOutMax" value="1" comment="**DEPRECATED** " />
             <parameter key="RhopOutMin" value="700" />
             <parameter key="RhopOutMax" value="1300" />
             <simulationdomain comment="Defines domain of simulation (default=Uses minimum and maximum position of the generated particles)">
-                <posmin x="default" y="default" z="default" comment="e.g.: x=0.5, y=default-1, z=default-10%" />
-                <posmax x="default" y="default" z="7.382564" />
+                <posmin x="-1.0000000000" y="-1.0000000000" z="-0.4675813532" comment="e.g.: x=0.5, y=default-1, z=default-10%" />
+                <posmax x="28.2566199826" y="24.9532677149" z="3.7223002625" />
             </simulationdomain>
         </parameters>
-        <particles np="64215" nb="58449" nbf="54349" mkboundfirst="10" mkfluidfirst="1">
+        <particles np="66225" nb="56367" nbf="55707" mkboundfirst="10" mkfluidfirst="1">
             <_summary>
                 <positions units_comment="metres (m)">
-                    <posmin x="0" y="0" z="0.015634" />
-                    <posmax x="27.3" y="24" z="2.41563" />
+                    <posmin x="0" y="0" z="0.032419" />
+                    <posmax x="27.3" y="24" z="2.03242" />
                 </positions>
-                <fixed count="54349" id="0-54348" mkcount="1" mkvalues="10" />
-                <moving count="4100" id="54349-58448" mkcount="1" mkvalues="210" />
-                <fluid count="5766" id="58449-64214" mkcount="1" mkvalues="1" />
+                <fixed count="55707" id="0-55706" mkcount="2" mkvalues="10-11" />
+                <moving count="660" id="55707-56366" mkcount="1" mkvalues="210" />
+                <fluid count="9858" id="56367-66224" mkcount="1" mkvalues="1" />
             </_summary>
-            <fixed mkbound="0" mk="10" begin="0" count="54349" />
-            <moving mkbound="200" mk="210" begin="54349" count="4100" refmotion="0" />
-            <fluid mkfluid="0" mk="1" begin="58449" count="5766" />
+            <fixed mkbound="0" mk="10" begin="0" count="53991" />
+            <fixed mkbound="1" mk="11" begin="53991" count="1716" />
+            <moving mkbound="200" mk="210" begin="55707" count="660" refmotion="0" />
+            <fluid mkfluid="0" mk="1" begin="56367" count="9858" />
         </particles>
         <constants>
             <data2d value="false" />
@@ -108,7 +162,7 @@
             <rhop0 value="1000" units_comment="kg/m^3" />
             <dp value="0.1" units_comment="metres (m)" />
             <h value="0.17320508076" units_comment="metres (m)" />
-            <b value="280285.71429" units_comment="Pascal (Pa)" />
+            <b value="448457.14286" units_comment="Pascal (Pa)" />
             <massbound value="1" units_comment="kg" />
             <massfluid value="1" units_comment="kg" />
         </constants>
@@ -118,7 +172,7 @@
         <motion>
             <objreal ref="0">
                 <begin mov="1" start="0" />
-                <mvrectfile id="1" duration="0.75">
+                <mvrectfile id="1" duration="6">
                     <file name="HADR_TerrainChouldari_gate_motion.txt" fields="4" fieldtime="0" fieldx="1" fieldy="2" fieldz="3" />
                 </mvrectfile>
             </objreal>

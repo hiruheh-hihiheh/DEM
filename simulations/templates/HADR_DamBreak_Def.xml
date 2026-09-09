@@ -59,9 +59,9 @@
                     z="-0.05" />
 
                 <pointmax
-                    x="3.14"
-                    y="0.77"
-                    z="1.2400000000000002" />
+                    x="6.06"
+                    y="0.994"
+                    z="1.3175" />
 
             </definition>
 
@@ -91,9 +91,9 @@
                             z="0" />
 
                         <size
-                            x="0.76"
-                            y="0.67"
-                            z="0.34" />
+                            x="1.49"
+                            y="0.894"
+                            z="0.8712000000000001" />
 
                     </drawbox>
 
@@ -113,17 +113,13 @@
                             z="0" />
 
                         <size
-                            x="3.04"
-                            y="0.67"
-                            z="0.5700000000000001" />
+                            x="5.96"
+                            y="0.894"
+                            z="1.1175" />
 
                     </drawbox>
 
-                    <!-- Dam wall with centered breach -->
-
-                    <!-- Left dam section -->
-
-                    <setmkbound mk="0" />
+                    <!-- Dam wall without breach -->
 
                     <drawbox>
 
@@ -132,58 +128,14 @@
                         </boxfill>
 
                         <point
-                            x="0.76"
+                            x="1.49"
                             y="0"
                             z="0" />
 
                         <size
-                            x="0.11399999999999999"
-                            y="0.23500000000000001"
-                            z="0.5700000000000001" />
-
-                    </drawbox>
-
-                    <!-- Right dam section -->
-
-                    <setmkbound mk="0" />
-
-                    <drawbox>
-
-                        <boxfill>
-                            solid
-                        </boxfill>
-
-                        <point
-                            x="0.76"
-                            y="0.43500000000000005"
-                            z="0" />
-
-                        <size
-                            x="0.11399999999999999"
-                            y="0.23500000000000001"
-                            z="0.5700000000000001" />
-
-                    </drawbox>
-
-                    <!-- Moving breach gate -->
-
-                    <setmkbound mk="200" />
-
-                    <drawbox>
-
-                        <boxfill>
-                            solid
-                        </boxfill>
-
-                        <point
-                            x="0.76"
-                            y="0.23500000000000001"
-                            z="0.0" />
-
-                        <size
-                            x="0.11399999999999999"
-                            y="0.2"
-                            z="0.5700000000000001" />
+                            x="0.2235"
+                            y="0.894"
+                            z="1.1175" />
 
                     </drawbox>
 
@@ -193,14 +145,7 @@
 
         </geometry>
 
-        <motion>
-            <objreal ref="200">
-                <begin mov="1" start="0"/>
-                <mvfile id="1" duration="4.00000000">
-                    <file name="HADR_DamBreak_Def_gate_motion.txt" fields="4" fieldtime="0" fieldx="1" fieldy="2" fieldz="3"/>
-                </mvfile>
-            </objreal>
-        </motion>
+
 
     </casedef>
 
@@ -278,7 +223,7 @@
 
             <parameter
                 key="TimeMax"
-                value="4.0" />
+                value="5.0" />
 
             <parameter
                 key="TimeOut"
@@ -306,7 +251,7 @@
                 <posmax
                     x="default"
                     y="default"
-                    z="1.24000000" />
+                    z="default + 50%" />
 
             </simulationdomain>
 
