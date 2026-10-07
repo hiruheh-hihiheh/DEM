@@ -16,7 +16,7 @@ import { Header } from '../components/Header'
 import {
   ScenarioPanel,
   type ScenarioState,
-} from '../components/SenarioPanel'
+} from '../components/ScenarioPanel'
 import { FloodMap } from '../map/FloodMap'
 import { MapToolbar } from '../components/MapToolBar'
 import { MetricCard } from '../components/MetricCard'
