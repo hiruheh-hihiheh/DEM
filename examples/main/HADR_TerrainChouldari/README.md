@@ -19,8 +19,8 @@ This is **not** the final SIH flood model.
 ## Terrain source
 
 - Source DEM: Copernicus GLO-30 DSM
-- Intermediate terrain: `data/terrain/chouldari/chouldari_sph_terrain.npz`
-- Terrain mesh: `data/terrain/chouldari/chouldari_sph_terrain.stl`
+- Intermediate terrain: `data/terrain/chouldari/sph/chouldari_sph_terrain.npz`
+- Terrain mesh: `data/terrain/chouldari/sph/chouldari_sph_terrain.stl`
 - Numerical prototype scale: stored in the NPZ, currently approximately `0.02`
 
 The STL coordinates are already in scaled simulation coordinates:

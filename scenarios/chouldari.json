@@ -1,0 +1,46 @@
+{
+  "name": "chouldari",
+  "display_name": "Chouldari",
+  "description": "Chouldari Dam on the Dhani Khari river (Andaman) - terrain-conditioned breach scenario driven by the tracked 5 km sample DEM.",
+
+  "dam_id": "AN71MH0003",
+
+  "data_root": "data/terrain/chouldari",
+  "runs_root": "simulations/chouldari/runs",
+
+  "inputs": {
+    "dem": "data/terrain/chouldari/input/chouldari_5km.tif",
+    "secondary_dem": "data/terrain/chouldari/input/chouldari_10km.tif"
+  },
+
+  "terrain": {
+    "condition": { "max_fill_depth": 5.0, "preview": true },
+    "flow": { "preview": true },
+    "domain": { "corridor_width_km": 1.0, "preview": true },
+    "sph_terrain": { "target_resolution_m": 30.0, "scale": 0.02, "csv": true, "preview": true },
+    "mesh": { "max_edge_m": 1.5, "preview": true }
+  },
+
+  "case": {
+    "generator": "examples/main/HADR_TerrainChouldari/generate_terrain_case.py",
+    "config": "examples/main/HADR_TerrainChouldari/terrain_case_config.json",
+    "overrides": {
+      "particle_spacing": 0.1,
+      "simulation_time": 6,
+      "time_out": 0.05,
+      "breach_width": 1.0,
+      "breach_time": 0.25
+    },
+    "geometry_preview": true
+  },
+
+  "simulation": { "enabled": true },
+
+  "postprocess": [
+    {
+      "name": "Particle outflow diagnostic",
+      "script": "examples/main/HADR_TerrainChouldari/analyze_particle_outflow.py",
+      "args": ["--out-dir", "{sim_run_dir}"]
+    }
+  ]
+}

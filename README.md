@@ -196,9 +196,9 @@ See [`data/README.md`](data/README.md) for the full breakdown. Summary:
 
 - `data/dams/raw/dam.geojson` — **required, tracked.** The API will not start
   serving dams without it.
-- `data/terrain/chouldari/chouldari_5km.tif` — **tracked sample DEM**
+- `data/terrain/chouldari/input/chouldari_5km.tif` - **tracked sample DEM**
   (clipped from the Copernicus GLO-30 DSM).
-- `data/terrain/chouldari/chouldari_sph_terrain.npz` + `.stl` — **tracked
+- `data/terrain/chouldari/sph/chouldari_sph_terrain.npz` + `.stl` - **tracked
   intermediates** consumed by the example terrain case; regenerate them with
   `sph_terrain.py` / `mesh.py` if needed.
 - Everything else under `data/terrain/` is **generated** (previews, conditioned
@@ -216,6 +216,40 @@ python generate_terrain_case.py           # writes the case XML + terrain copies
 ```
 
 Details: [`examples/main/HADR_TerrainChouldari/README.md`](examples/main/HADR_TerrainChouldari/README.md).
+
+---
+
+## Scenario runner
+
+[`scripts/run_scenario.py`](scripts/run_scenario.py) orchestrates the whole
+pipeline (terrain processing → SPH terrain/case generation → DualSPHysics
+simulation → post-processing) for any scenario defined under
+[`scenarios/*.json`](scenarios/chouldari.json). It reuses the existing
+pipeline modules directly — no duplicated business logic.
+
+```powershell
+python scripts/run_scenario.py list                  # available scenarios
+python scripts/run_scenario.py chouldari --dry-run   # validate without running
+python scripts/run_scenario.py chouldari             # full end-to-end run
+python scripts/run_scenario.py chouldari --step terrain   # run one stage
+python scripts/run_scenario.py chouldari --step simulation
+python scripts/run_scenario.py chouldari --force     # bypass freshness checks
+python scripts/run_scenario.py chouldari --clean     # delete generated outputs, then run
+```
+
+- **`DUALSPHYSICS_ROOT` resolution** (highest priority first): `--dualsphysics-root` flag
+  → `DUALSPHYSICS_ROOT` env var → per-scenario `dualsphysics_root` → gitignored
+  [`scenarios/local.json`](scenarios/local.example.json) → clear error. The
+  `GenCase_win64.exe`, `DualSPHysics5.4_win64.exe` and `PartVTK_win64.exe`
+  binaries must exist.
+- Freshness is tracked in `data/terrain/<scenario>/metadata/manifest.json`;
+  unchanged steps are skipped. Simulation and post-processing always run.
+- Every run lands in `simulations/<scenario>/runs/run_<timestamp>/` with
+  `run.log` + `metadata.json`; `simulations/<scenario>/latest.json` points at
+  the most recent successful one.
+- Exit codes: `0` success, `1` validation/step failure, `2` usage/config error.
+
+Full reference: [`docs/scenario-runner.md`](docs/scenario-runner.md).
 
 ---
 

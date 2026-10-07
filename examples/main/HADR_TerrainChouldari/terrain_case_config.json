@@ -1,8 +1,8 @@
 {
   "case_name": "HADR_TerrainChouldari",
 
-  "terrain_npz": "data/terrain/chouldari/chouldari_sph_terrain.npz",
-  "terrain_stl": "data/terrain/chouldari/chouldari_sph_terrain.stl",
+  "terrain_npz": "data/terrain/chouldari/sph/chouldari_sph_terrain.npz",
+  "terrain_stl": "data/terrain/chouldari/sph/chouldari_sph_terrain.stl",
   "terrain_output_subdir": "terrain",
 
   "definition_name": "HADR_TerrainChouldari_Def.xml",

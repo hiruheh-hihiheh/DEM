@@ -6,11 +6,11 @@ This module converts the intermediate DEM-derived terrain representation
 
 The current output is an ASCII STL surface mesh:
 
-    data/terrain/chouldari/chouldari_sph_terrain.stl
+    data/terrain/chouldari/sph/chouldari_sph_terrain.stl
 
 and a 3D preview image:
 
-    data/terrain/chouldari/chouldari_sph_terrain_mesh_preview.png
+    data/terrain/chouldari/sph/chouldari_sph_terrain_mesh_preview.png
 
 IMPORTANT LIMITATIONS:
 

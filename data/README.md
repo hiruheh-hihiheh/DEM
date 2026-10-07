@@ -10,12 +10,16 @@ data/
 │   └── raw/
 │       └── dam.geojson            # dam inventory — TRACKED, required by the API
 └── terrain/
-    ├── chouldari/                 # sample site (Chouldari)
-    │   ├── chouldari_5km.tif                  # TRACKED — sample DEM (input)
-    │   ├── chouldari_sph_terrain.npz          # TRACKED — terrain point cloud (example input)
-    │   ├── chouldari_sph_terrain.stl          # TRACKED — terrain surface mesh (example input)
-    │   └── … generated products (ignored) …
-    └── chouldari_real/            # local experiments — IGNORED
+    └── chouldari/                 # first scenario site (Chouldari)
+        ├── input/                 # raw DEM inputs
+        │   ├── chouldari_5km.tif      # TRACKED — sample DEM
+        │   └── chouldari_10km.tif     # local-only extra clip (ignored)
+        ├── processed/             # generated: conditioned/flow/domain rasters + previews (ignored)
+        ├── sph/                   # generated: NPZ/CSV/STL terrain products + previews
+        │   ├── chouldari_sph_terrain.npz  # TRACKED — terrain point cloud
+        │   ├── chouldari_sph_terrain.stl  # TRACKED — terrain surface mesh
+        │   └── … csv/png (ignored) …
+        └── metadata/              # scenario manifest written by the scenario runner (ignored)
 ```
 
 ## Tracked files
@@ -23,23 +27,26 @@ data/
 | File | Role |
 | ---- | ---- |
 | `dams/raw/dam.geojson` | Source dam inventory. `GET /api/dams` is derived from it (coordinates converted from DMS to decimal degrees at load time). |
-| `terrain/chouldari/chouldari_5km.tif` | Sample DEM for the Chouldari site, clipped from **Copernicus GLO-30 DSM**. Input to the whole terrain pipeline. |
-| `terrain/chouldari/chouldari_sph_terrain.npz` | Intermediate SPH terrain point cloud (written by `sph_terrain.py`). Consumed by `mesh.py` and the example terrain case. |
-| `terrain/chouldari/chouldari_sph_terrain.stl` | Terrain surface mesh (written by `mesh.py`). Consumed by the example terrain case (`terrain_case_config.json`). |
+| `terrain/chouldari/input/chouldari_5km.tif` | Sample DEM for the Chouldari site, clipped from **Copernicus GLO-30 DSM**. Input to the whole terrain pipeline. |
+| `terrain/chouldari/sph/chouldari_sph_terrain.npz` | Intermediate SPH terrain point cloud (written by `sph_terrain.py`). Consumed by `mesh.py` and the example terrain case. |
+| `terrain/chouldari/sph/chouldari_sph_terrain.stl` | Terrain surface mesh (written by `mesh.py`). Consumed by the example terrain case (`terrain_case_config.json`). |
 
 ## Generated files (ignored, safe to delete / regenerate)
 
-Produced by `backend/app/services/terrain/` CLIs:
+Produced by `backend/app/services/terrain/` CLIs or by
+`python scripts/run_scenario.py <scenario>`:
 
-- `*_conditioned*.tif/png` — hydrological conditioning (`condition.py`)
-- `*_flow_accumulation.tif`, `*_flow_preview.png` — flow analysis (`flow.py`)
-- `*_flood_domain.tif`, `*_flood_domain_preview.png` — flood domain (`domain.py`)
-- `*_preview.png` — raster previews (`preview.py`)
-- `chouldari_sph_terrain.csv` — terrain points export (`sph_terrain.py`)
-- `output_hh.tif` — sample DEM output used in `dem.py` docs
+- `processed/*_conditioned*.tif/png` — hydrological conditioning (`condition.py`)
+- `processed/*_flow_accumulation.tif`, `processed/*_flow_preview.png` — flow analysis (`flow.py`)
+- `processed/*_flood_domain.tif`, `processed/*_flood_domain_preview.png` — flood domain (`domain.py`)
+- `processed/*_preview.png` — raster previews (`preview.py`)
+- `sph/*_sph_terrain.csv`, `sph/*_preview.png` — terrain point export and previews
+- `metadata/manifest.json` — scenario-run freshness manifest (scenario runner)
+- `processed/output_hh.tif` — sample DEM output used in `dem.py` docs
 
-`chouldari_real/` holds local experiments (including a ~22 MB flow raster) and
-is never tracked.
+Every other `data/terrain/<site>/` directory (raw inputs for future scenarios,
+`chouldari_real`-style experiments, …) is ignored by default; see the root
+`.gitignore` for the exact rules and how to un-ignore new sample inputs.
 
 ## External datasets
 
@@ -53,5 +60,7 @@ Real-world DEMs are **not** committed. To work on another area:
 
 ## Large outputs
 
-Simulation results are written to `simulations/runs/<simulation_id>/` (repo
-root) and can reach many gigabytes — that directory is ignored by Git.
+Simulation results are written to `simulations/` (repo root) — either
+`simulations/runs/<simulation_id>/` for API-triggered runs or
+`simulations/<scenario>/runs/<run_id>/` for scenario-runner runs — and can
+reach many gigabytes. The whole `simulations/` tree is ignored by Git.

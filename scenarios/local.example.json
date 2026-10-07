@@ -1,0 +1,4 @@
+{
+  "_comment": "Machine-local scenario configuration. Copy this file to scenarios/local.json (git-ignored) and set the path to YOUR DualSPHysics installation. It is read only when DUALSPHYSICS_ROOT is not set and the scenario itself does not define dualsphysics_root.",
+  "dualsphysics_root": "C:/path/to/DualSPHysics_v5.4"
+}

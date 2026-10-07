@@ -8,6 +8,7 @@ It does NOT modify the terrain, SPH parameters, or generated XML.
 It does NOT run GenCase or DualSPHysics.
 """
 
+import argparse
 import re
 import json
 import sys
@@ -26,19 +27,65 @@ PARTICLES_DIR = OUT_DIR / "particles"
 
 def parse_vtk_particles(vtk_path: Path) -> np.ndarray | None:
     """
-    Robust ASCII VTK point parser.
+    Legacy VTK point parser (ASCII and BINARY).
 
-    Locates the POINTS N float/double header, then reads exactly N*3 numeric
-    tokens. Stops if a new VTK section keyword is encountered before enough
-    values are collected.
+    PartVTK writes big-endian BINARY polydata by default; the format line in
+    the file header decides which parser runs:
+
+    * BINARY -> slice exactly N*3 big-endian floats/doubles after the POINTS
+      header line (numpy frombuffer).
+    * ASCII  -> tokenize lines after the POINTS header, stopping at the next
+      VTK section keyword or the first non-numeric token.
     """
     try:
-        with open(vtk_path, "r", encoding="utf-8", errors="ignore") as fh:
-            lines = fh.readlines()
+        data = vtk_path.read_bytes()
     except Exception as exc:
         print(f"   WARNING: cannot read {vtk_path.name}: {exc}")
         return None
 
+    header_match = re.search(rb"(?im)^POINTS\s+(\d+)\s+(\w+)", data)
+    if header_match is None:
+        print(f"   WARNING: no POINTS section found in {vtk_path.name}")
+        return None
+
+    num_points = int(header_match.group(1))
+    type_token = header_match.group(2).lower()
+    if num_points <= 0:
+        print(f"   WARNING: no POINTS section found in {vtk_path.name}")
+        return None
+
+    # Header format line ("BINARY"/"ASCII") appears before the POINTS line.
+    is_binary = (
+        re.search(rb"(?im)^BINARY[ \t\r]*$", data[: header_match.start()])
+        is not None
+    )
+
+    if is_binary:
+        itemsize = 8 if type_token.startswith(b"double") else 4
+        dtype = ">f8" if itemsize == 8 else ">f4"
+
+        # The POINTS header line ends with a single newline (optionally
+        # preceded by CR); binary data starts immediately after it.
+        start = header_match.end()
+        if data[start : start + 2] == b"\r\n":
+            start += 2
+        elif data[start : start + 1] == b"\n":
+            start += 1
+
+        count = num_points * 3
+        buf = data[start : start + count * itemsize]
+        if len(buf) < count * itemsize:
+            print(
+                f"   WARNING: truncated BINARY POINTS data in "
+                f"{vtk_path.name} ({len(buf)} of {count * itemsize} bytes)"
+            )
+            return None
+
+        pts = np.frombuffer(buf, dtype=dtype).astype(np.float64)
+        return pts.reshape(num_points, 3)
+
+    # ---- ASCII fallback ----
+    lines = data.decode("utf-8", errors="ignore").splitlines()
     num_points = 0
     points_start_line = -1
 
@@ -429,6 +476,30 @@ def check_boundary_proximity(
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    global OUT_DIR, PARTICLES_DIR
+
+    parser = argparse.ArgumentParser(
+        description=(
+            "Particle outflow diagnostic for HADR_TerrainChouldari "
+            "(read-only: parses the solver log and generated VTK particles)."
+        )
+    )
+    parser.add_argument(
+        "--out-dir",
+        default=None,
+        help=(
+            "Simulation output directory to inspect: the directory containing "
+            "solver.log (default: HADR_TerrainChouldari_out next to this "
+            "script). Point it at a scenario-runner run directory to analyze "
+            "that run."
+        ),
+    )
+    args = parser.parse_args()
+
+    if args.out_dir:
+        OUT_DIR = Path(args.out_dir).resolve()
+        PARTICLES_DIR = OUT_DIR / "particles"
+
     print("=" * 78)
     print("HADR_TerrainChouldari  Particle Outflow Diagnostic")
     print("=" * 78)
