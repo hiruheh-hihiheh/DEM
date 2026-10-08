@@ -1,306 +1,175 @@
-import React, {
-  useEffect,
-  useMemo,
-  useState,
-} from 'react'
-
-import {
-  DamDigitalTwin,
-} from '../components/dam/DamDigitalTwin'
-
-import {
-  buildDamDigitalTwin,
-} from '../utils/damDigitalTwin'
-
-import { Header } from '../components/Header'
-import {
-  ScenarioPanel,
-  type ScenarioState,
-} from '../components/ScenarioPanel'
+import React, { useMemo } from 'react'
 import { FloodMap } from '../map/FloodMap'
 import { MapToolbar } from '../components/MapToolBar'
 import { MetricCard } from '../components/MetricCard'
-import { StatusBadge } from '../components/StatusBadge'
-import { fetchDams } from '../services/api'
-
 import type { DamGeoJSON } from '../types/dam'
+import type { JobSummary } from '../types/simulation'
 
-export const Dashboard: React.FC = () => {
-  const [scenario, setScenario] =
-    useState<ScenarioState>({
-      river: '',
-      dam: '',
-      scenario: 'normal',
-      reservoirLevel: 75,
-    })
+interface DashboardProps {
+  damsData: DamGeoJSON | null
+  jobs: JobSummary[]
+  onOpenDam: (damId: string) => void
+  onNewSimulation: () => void
+  onHistory: () => void
+  onOpenRun: (jobId: string) => void
+  onViewResult: (jobId: string) => void
+}
 
-  const [damsData, setDamsData] =
-    useState<DamGeoJSON | null>(null)
+const fmtAgo = (iso: string | null): string => {
+  if (!iso) return '—'
+  const delta = (Date.now() - new Date(iso).getTime()) / 1000
+  if (delta < 60) return 'just now'
+  if (delta < 3600) return `${Math.floor(delta / 60)} min ago`
+  if (delta < 86400) return `${Math.floor(delta / 3600)} h ago`
+  return new Date(iso).toLocaleDateString()
+}
 
-  const [isLoadingDams, setIsLoadingDams] =
-    useState(true)
+export const Dashboard: React.FC<DashboardProps> = ({
+  damsData,
+  jobs,
+  onOpenDam,
+  onNewSimulation,
+  onHistory,
+  onOpenRun,
+  onViewResult,
+}) => {
+  const active = jobs.filter(
+    (j) => j.status === 'running' || j.status === 'queued',
+  )
+  const resultsReady = jobs.filter((j) => j.result.available)
 
-  const [damLoadError, setDamLoadError] =
-    useState<string | null>(null)
-
-  const [isSimulating, setIsSimulating] =
-    useState(false)
-
-  const [simulationComplete, setSimulationComplete] =
-    useState(false)
-
-  useEffect(() => {
-    const loadDams = async () => {
-      try {
-        setIsLoadingDams(true)
-        setDamLoadError(null)
-
-        const data = await fetchDams()
-
-        setDamsData(data)
-      } catch (error) {
-        console.error(
-          'Failed to load dams:',
-          error,
-        )
-
-        setDamLoadError(
-          'Failed to connect to backend API.',
-        )
-      } finally {
-        setIsLoadingDams(false)
-      }
-    }
-
-    void loadDams()
-  }, [])
-
-  const riversList = useMemo(() => {
-    if (!damsData) {
-      return []
-    }
-
-    const rivers = new Set(
-      damsData.features
-        .map(
-          (feature) =>
-            feature.properties.river,
-        )
-        .filter(
-          (
-            river,
-          ): river is string =>
-            Boolean(river),
-        ),
-    )
-
-    return Array.from(rivers).sort()
-  }, [damsData])
-
-  const filteredDams = useMemo(() => {
-    if (!damsData) {
-      return []
-    }
-
-    return damsData.features
-      .filter(
-        (feature) =>
-          !scenario.river ||
-          feature.properties.river ===
-            scenario.river,
-      )
-      .filter(
-        (feature) =>
-          Boolean(feature.properties.name),
-      )
-      .map((feature) => ({
-        id:
-          feature.properties.pic ??
-          feature.id,
-        name:
-          feature.properties.name ??
-          'Unnamed Dam',
-        river:
-          feature.properties.river,
-      }))
-      .sort((a, b) =>
-        a.name.localeCompare(b.name),
-      )
-  }, [damsData, scenario.river])
-
-  const selectedDam = useMemo(() => {
-    if (!damsData || !scenario.dam) {
-      return null
-    }
-
-    return (
-      damsData.features.find(
-        (feature) =>
-          (feature.properties.pic ?? feature.id) ===
-          scenario.dam,
-      ) ?? null
-    )
-  }, [damsData, scenario.dam])
-
-  const selectedDamTwin = useMemo(() => {
-  if (!selectedDam) {
-    return null
-  }
-
-  return buildDamDigitalTwin(selectedDam)
-}, [selectedDam])
-
-  const handleScenarioChange = (
-    updates: Partial<ScenarioState>,
-  ) => {
-    setScenario((previous) => ({
-      ...previous,
-      ...updates,
-    }))
-
-    setSimulationComplete(false)
-  }
-
-  const handleDamSelect = (
-    damId: string,
-  ) => {
-    setScenario((previous) => ({
-      ...previous,
-      dam: damId,
-    }))
-
-    setSimulationComplete(false)
-  }
-
-  const handleRunSimulation = () => {
-    if (!scenario.dam) {
-      return
-    }
-
-    setIsSimulating(true)
-    setSimulationComplete(false)
-
-    setTimeout(() => {
-      setIsSimulating(false)
-      setSimulationComplete(true)
-    }, 2000)
-  }
-
-  const systemStatus =
-    isSimulating
-      ? 'simulation'
-      : simulationComplete
-        ? 'live'
-        : 'idle'
-
-  const statusText =
-    isSimulating
-      ? 'Running Simulation'
-      : simulationComplete
-        ? 'Simulation Complete'
-        : 'System Ready'
+  const recent = useMemo(
+    () =>
+      [...jobs]
+        .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
+        .slice(0, 6),
+    [jobs],
+  )
 
   return (
-    <div className="app-shell">
-      <Header
-        status={
-          <StatusBadge
-            status={systemStatus}
-            text={statusText}
-          />
-        }
-      />
-
-      <main className="app-main">
-        <aside className="app-sidebar">
-<ScenarioPanel
-  state={scenario}
-  onChange={handleScenarioChange}
-  onRunSimulation={handleRunSimulation}
-  isSimulating={isSimulating}
-  riversList={riversList}
-  damsList={filteredDams}
-  isLoadingDams={isLoadingDams}
-  damLoadError={damLoadError}
-  selectedDamData={selectedDam}
-/>
-        </aside>
-
-        <section className="app-content">
-          <MapToolbar />
-
-          <FloodMap
-            damsData={damsData}
-            selectedDam={scenario.dam}
-            onDamSelect={
-              handleDamSelect
-            }
-          />
-          {selectedDamTwin && (
-  <section className="digital-twin-panel">
-    <div className="digital-twin-panel__header">
-      <div>
-        <span className="digital-twin-panel__eyebrow">
-          Digital Twin
-        </span>
-
-        <h2 className="digital-twin-panel__title">
-          {selectedDamTwin.identity.name ??
-            'Selected Dam'}
-        </h2>
+    <div className="page">
+      <div className="page__header">
+        <div>
+          <h1 className="page__title">Hydro Twin dashboard</h1>
+          <p className="page__subtitle">
+            Dam-break flood simulation powered by the Scenario Runner and
+            DualSPHysics. Pick a dam, configure a scenario and run it — no
+            terminal required.
+          </p>
+        </div>
+        <div className="page__actions">
+          <button type="button" className="btn" onClick={onHistory}>
+            History
+          </button>
+          <button
+            type="button"
+            className="btn btn--accent btn--lg"
+            onClick={onNewSimulation}
+          >
+            ▶ New simulation
+          </button>
+        </div>
       </div>
 
-      <button
-        type="button"
-        className="digital-twin-panel__close"
-        onClick={() =>
-          setScenario((previous) => ({
-            ...previous,
-            dam: '',
-          }))
-        }
-      >
-        Close
-      </button>
-    </div>
-
-    <DamDigitalTwin
-      data={selectedDamTwin}
-    />
-  </section>
-)}
-        </section>
-      </main>
-
-      <footer className="app-metrics">
+      <div className="app-metrics">
         <MetricCard
-          label="Flood Area"
-          value="--"
-          unit="km²"
-          description="Awaiting simulation"
+          label="Dams"
+          value={damsData ? damsData.features.length.toLocaleString() : '—'}
+          unit=""
+          description="structures in the inventory"
         />
-
         <MetricCard
-          label="Maximum Depth"
-          value="--"
-          unit="m"
-          description="Awaiting simulation"
+          label="Simulations"
+          value={jobs.length}
+          unit=""
+          description="web jobs and CLI runs"
         />
-
         <MetricCard
-          label="Maximum Velocity"
-          value="--"
-          unit="m/s"
-          description="Awaiting simulation"
+          label="Active now"
+          value={active.length}
+          unit=""
+          status={active.length > 0 ? 'warning' : 'normal'}
+          description={
+            active.length > 0 ? 'a simulation is running' : 'backend idle'
+          }
         />
-
         <MetricCard
-          label="Population Exposed"
-          value="--"
-          unit="people"
-          description="Awaiting simulation"
+          label="Results ready"
+          value={resultsReady.length}
+          unit=""
+          status="normal"
+          description="processed result packages"
         />
-      </footer>
+      </div>
+
+      <div className="dash-grid">
+        <div>
+          <div className="dash-map">
+            <FloodMap
+              damsData={damsData}
+              onDamSelect={onOpenDam}
+            />
+            <MapToolbar />
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel__title">Recent simulations</div>
+          {recent.length === 0 ? (
+            <div className="empty-state">
+              No simulations yet — run your first one.
+            </div>
+          ) : (
+            <ul className="recent-list">
+              {recent.map((job) => (
+                <li key={job.id} className="recent-item">
+                  <div>
+                    <div className="recent-item__title">
+                      {job.scenario_display}
+                    </div>
+                    <div className="recent-item__meta">
+                      {fmtAgo(job.created_at)} ·{' '}
+                      {job.duration_seconds != null
+                        ? `${job.duration_seconds.toFixed(0)} s`
+                        : job.stage ?? job.status}
+                    </div>
+                  </div>
+                  <div className="row-actions">
+                    <span className={`status-pill status-pill--${job.status}`}>
+                      {job.status}
+                    </span>
+                    {job.status === 'running' || job.status === 'queued' ? (
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        onClick={() => onOpenRun(job.id)}
+                      >
+                        Watch
+                      </button>
+                    ) : job.result.available ? (
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--accent"
+                        onClick={() => onViewResult(job.id)}
+                      >
+                        View
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        onClick={() => onOpenRun(job.id)}
+                      >
+                        Details
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

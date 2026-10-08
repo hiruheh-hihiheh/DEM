@@ -9,6 +9,9 @@ fastapi>=0.115
 uvicorn>=0.30
 pydantic>=2.7
 
+# --- File upload (job import endpoint) ---
+python-multipart>=0.0.9
+
 # --- GIS / DEM processing (app/services/terrain/*) — verified with
 #     numpy 2.4.2, rasterio 1.5.1, matplotlib 3.10.8 ---
 numpy>=1.26

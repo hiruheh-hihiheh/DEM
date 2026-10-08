@@ -570,15 +570,25 @@ def _estimate_dam_span(
                 )
             return stats["min"] if stats is not None else None
 
-        while s_min > -max_span / 2.0:
-            zmin = _line_min(s_min - band, s_min)
-            if zmin is None or zmin >= containment_z - 1e-6:
+        # Grow BOTH ends together (lockstep) so the span stays symmetric
+        # about the dam centerline -- the breach must remain centered on the
+        # dam span.  A side whose next band already reaches containment_z
+        # keeps stepping while the other side grows, and each side stops
+        # exactly when its own next band is satisfied.
+        while True:
+            left_ok = True
+            right_ok = True
+            if s_min > -max_span / 2.0:
+                zmin = _line_min(s_min - band, s_min)
+                left_ok = zmin is None or zmin >= containment_z - 1e-6
+            if s_max < max_span / 2.0:
+                zmin = _line_min(s_max, s_max + band)
+                right_ok = zmin is None or zmin >= containment_z - 1e-6
+            if left_ok and right_ok:
+                break
+            if s_min <= -max_span / 2.0 and s_max >= max_span / 2.0:
                 break
             s_min = max(s_min - band, -max_span / 2.0)
-        while s_max < max_span / 2.0:
-            zmin = _line_min(s_max, s_max + band)
-            if zmin is None or zmin >= containment_z - 1e-6:
-                break
             s_max = min(s_max + band, max_span / 2.0)
 
         width = s_max - s_min
@@ -959,10 +969,8 @@ def _build_xml(
 
     fixed_wall_xml = ""
     fixed_wall_boxes = list(geom.fixed_boxes)
-    if geom.apron_box is not None:
-        fixed_wall_boxes.append(geom.apron_box)
     if fixed_wall_boxes:
-        fixed_wall_xml = "                    <!-- Terrain-anchored fixed dam segments + breach apron -->\n"
+        fixed_wall_xml = "                    <!-- Terrain-anchored fixed dam segments -->\n"
         fixed_wall_xml += f"                    <setmkbound mk=\"{FIXED_WALL_MK}\" />\n\n"
         for box in fixed_wall_boxes:
             fixed_wall_xml += _drawbox_xml(box)
@@ -972,6 +980,19 @@ def _build_xml(
         breach_wall_xml = "                    <!-- Moving centered breach gate -->\n"
         breach_wall_xml += f"                    <setmkbound mk=\"{BREACH_GATE_MK}\" />\n\n"
         breach_wall_xml += _drawbox_xml(geom.breach_box)
+
+    apron_wall_xml = ""
+    if geom.apron_box is not None:
+        # GenCase lets a later draw command own a lattice cell it shares with
+        # an earlier one.  The apron must therefore be drawn AFTER the gate:
+        # both boxes overlap in the gate footprint, and if the gate draws last
+        # it replaces the apron layers it touches, which opens a trench in the
+        # breach floor as soon as the gate lifts.  (The apron keeps the cells
+        # instead; the gate's surviving layers stay contiguous with the apron
+        # top, so the closed gate still seals the breach.)
+        apron_wall_xml = "                    <!-- Breach landing apron (drawn after the gate) -->\n"
+        apron_wall_xml += f"                    <setmkbound mk=\"{FIXED_WALL_MK}\" />\n\n"
+        apron_wall_xml += _drawbox_xml(geom.apron_box)
 
     reservoir_xml = ""
     if reservoir.boxes:
@@ -1022,6 +1043,7 @@ def _build_xml(
 
 {fixed_wall_xml}
 {breach_wall_xml}
+{apron_wall_xml}
 {reservoir_xml}
                 </mainlist>
             </commands>
@@ -1266,7 +1288,27 @@ def _validate_geometry(
             errors.append(message)
 
     fluid_clearance = float(cfg.get("fluid_bed_clearance", 0.02))
+    spacing = float(cfg.get("particle_spacing", 0.1))
     breach_enabled = bool(cfg.get("breach_enabled", False))
+
+    # GenCase fills a lattice cell whenever cell[center +/- dp/2] intersects the
+    # draw box, and a LATER draw command replaces an earlier particle in the
+    # same cell.  The single-layer terrain STL is drawn first, so a fluid box
+    # whose bottom cell reaches a terrain boundary lattice plane erases that
+    # boundary particle: with clearance 0.02 the whole reservoir floor lost its
+    # collision boundary (a 3 m x 1.3 m hole in the terrain) and the water
+    # drained through it from t=0.10 onwards.  Requiring clearance > dp keeps
+    # the fluid bottom cell strictly more than one lattice step above every
+    # terrain boundary plane in the footprint (vertical claim impossible) and
+    # keeps the reservoir face on lattice columns distinct from the dam wall's
+    # (face claim impossible).
+    check(
+        fluid_clearance > spacing,
+        f"fluid_bed_clearance ({fluid_clearance:.4f}) must exceed "
+        f"particle_spacing ({spacing:.4f}): otherwise fluid draw cells can "
+        f"claim and erase the single-layer terrain boundary cells beneath the "
+        f"reservoir (drain-through) or share the dam-face lattice column",
+    )
 
     # --- Dam wall validation ---
 
@@ -1344,6 +1386,11 @@ def _validate_geometry(
         check(
             -1e-3 <= gap <= fluid_clearance + 1e-3,
             f"Reservoir segment {i} is immediately upstream of dam face",
+        )
+        check(
+            gap >= spacing - 1e-3,
+            f"Reservoir segment {i} face gap ({gap:.4f}) >= dp keeps the fluid "
+            f"and dam wall on distinct lattice columns",
         )
 
         # Reservoir does not overlap terrain.

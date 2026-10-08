@@ -33,10 +33,10 @@
   "dam_valley_threshold": 0.30,
 
   "reservoir_length": 3.0,
-  "reservoir_water_depth": 0.50,
+  "reservoir_water_depth": 0.66,
   "reservoir_freeboard": 0.05,
   "reservoir_segments": 12,
-  "fluid_bed_clearance": 0.02,
+  "fluid_bed_clearance": 0.16,
 
   "breach_enabled": true,
   "breach_width": 1.0,
