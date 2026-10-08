@@ -92,7 +92,7 @@ def case_simulation_params(scenario: Scenario) -> dict[str, Any]:
     cfg = merged_case_config(scenario)
     keys = ("case_name", "particle_spacing", "simulation_time", "time_out",
             "breach_enabled", "breach_width", "breach_time",
-            "reservoir_length", "reservoir_min_water_depth")
+            "reservoir_length", "reservoir_water_depth")
     return {k: cfg[k] for k in keys if k in cfg}
 
 

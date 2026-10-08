@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import shutil
+import struct
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -101,6 +103,7 @@ class DamGeometry:
     local_terrain_max: float | None
     fixed_boxes: list[WallBox] = field(default_factory=list)
     breach_box: WallBox | None = None
+    apron_box: WallBox | None = None
     breach_center: float | None = None
     breach_width: float | None = None
     fixed_left_width: float | None = None
@@ -282,6 +285,111 @@ def _estimate_upstream_axis(
     return best_axis, best_sign, best_method
 
 
+# --- True simulation surface (STL) sampling ---------------------------------
+# The NPZ terrain arrays are a sparse scattered sample (a few points per m2)
+# while DualSPHysics collides against the STL facets, so vertex windows can be
+# empty (silently skipping containment/anchoring checks) or miss the true
+# surface by tens of centimetres on slopes.  A rasterized copy of the STL is
+# therefore used for terrain statistics whenever it has been loaded.
+
+_SURFACE_GRID: dict | None = None
+_SURFACE_STEP = 0.025
+_STL_VERTEX_RE = re.compile(
+    r"vertex\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)"
+)
+
+
+def _read_stl_triangles(path: Path) -> np.ndarray | None:
+    """Load STL triangles (binary or ASCII) as an (n, 3, 3) float array."""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if len(raw) >= 84:
+        ntri = struct.unpack("<I", raw[80:84])[0]
+        if ntri > 0 and 84 + 50 * ntri == len(raw):
+            tri_dtype = np.dtype(
+                [("normal", "<f4", 3), ("v", "<f4", (3, 3)), ("attr", "<u2")]
+            )
+            data = np.frombuffer(raw, dtype=tri_dtype, count=ntri, offset=84)
+            return np.asarray(data["v"], dtype=float)
+    matches = _STL_VERTEX_RE.findall(raw.decode("utf-8", errors="ignore"))
+    if not matches:
+        return None
+    vals = np.asarray(matches, dtype=float)
+    if vals.size % 9:
+        return None
+    return vals.reshape(-1, 3, 3)
+
+
+def _build_surface_grid(tris: np.ndarray, step: float) -> dict | None:
+    """Rasterize the STL heightfield onto a regular grid (z = surface)."""
+    if tris is None or tris.size == 0:
+        return None
+    pts = tris.reshape(-1, 3)
+    x0 = math.floor(float(pts[:, 0].min()) / step) * step
+    x1 = math.ceil(float(pts[:, 0].max()) / step) * step
+    y0 = math.floor(float(pts[:, 1].min()) / step) * step
+    y1 = math.ceil(float(pts[:, 1].max()) / step) * step
+    xs = np.arange(x0, x1 + step * 0.5, step)
+    ys = np.arange(y0, y1 + step * 0.5, step)
+    if xs.size > 8000 or ys.size > 8000:
+        return None
+    z2d = np.full((ys.size, xs.size), np.nan)
+
+    for a, b, c in tris:
+        den = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])
+        if abs(den) < 1e-14:
+            continue  # vertical/degenerate facet in xy projection
+        ix0 = int(np.searchsorted(xs, min(a[0], b[0], c[0]), side="left"))
+        ix1 = int(np.searchsorted(xs, max(a[0], b[0], c[0]), side="right"))
+        iy0 = int(np.searchsorted(ys, min(a[1], b[1], c[1]), side="left"))
+        iy1 = int(np.searchsorted(ys, max(a[1], b[1], c[1]), side="right"))
+        ix0, iy0 = max(ix0, 0), max(iy0, 0)
+        ix1, iy1 = min(ix1, xs.size), min(iy1, ys.size)
+        if ix1 <= ix0 or iy1 <= iy0:
+            continue
+        gx = xs[ix0:ix1][None, :] - a[0]
+        gy = ys[iy0:iy1][:, None] - a[1]
+        v0x, v0y = b[0] - a[0], b[1] - a[1]
+        v1x, v1y = c[0] - a[0], c[1] - a[1]
+        u = (gx * v1y - v1x * gy) / den
+        v = (v0x * gy - gx * v0y) / den
+        m = (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1 + 1e-9)
+        if not np.any(m):
+            continue
+        zz = a[2] + u * (b[2] - a[2]) + v * (c[2] - a[2])
+        sub = z2d[iy0:iy1, ix0:ix1]
+        upd = m & (np.isnan(sub) | (zz < sub))
+        sub[upd] = zz[upd]
+
+    # Snap the exact vertex elevations onto the grid so facet extrema at
+    # vertices are never rounded away.
+    ix = np.rint((pts[:, 0] - x0) / step).astype(int)
+    iy = np.rint((pts[:, 1] - y0) / step).astype(int)
+    np.clip(ix, 0, xs.size - 1, out=ix)
+    np.clip(iy, 0, ys.size - 1, out=iy)
+    cur = z2d[iy, ix]
+    fill = np.isnan(cur)
+    if np.any(fill):
+        z2d[iy[fill], ix[fill]] = pts[fill, 2]
+    np.minimum.at(z2d, (iy, ix), pts[:, 2])
+
+    if not np.any(np.isfinite(z2d)):
+        return None
+    return {"x": xs, "y": ys, "z": z2d}
+
+
+def _load_surface_grid(cfg: dict) -> bool:
+    """Rasterize the configured terrain STL; returns False (vertex stats
+    remain in use) when the STL cannot be read."""
+    global _SURFACE_GRID
+    tris = _read_stl_triangles(_resolve_path(cfg["terrain_stl"]))
+    grid = _build_surface_grid(tris, _SURFACE_STEP)
+    _SURFACE_GRID = grid
+    return grid is not None
+
+
 def _cell_stats(
     x: np.ndarray,
     y: np.ndarray,
@@ -291,11 +399,33 @@ def _cell_stats(
     y0: float,
     y1: float,
 ) -> dict | None:
+    lo_x, hi_x = min(x0, x1), max(x0, x1)
+    lo_y, hi_y = min(y0, y1), max(y0, y1)
+
+    # Prefer the rasterized STL surface (the actual simulation boundary).
+    if _SURFACE_GRID is not None:
+        grid = _SURFACE_GRID
+        ix0 = int(np.searchsorted(grid["x"], lo_x, side="left"))
+        ix1 = int(np.searchsorted(grid["x"], hi_x, side="right"))
+        iy0 = int(np.searchsorted(grid["y"], lo_y, side="left"))
+        iy1 = int(np.searchsorted(grid["y"], hi_y, side="right"))
+        if ix1 > ix0 and iy1 > iy0:
+            values = grid["z"][iy0:iy1, ix0:ix1]
+            values = values[np.isfinite(values)]
+            if values.size:
+                return {
+                    "count": int(values.size),
+                    "min": float(np.min(values)),
+                    "max": float(np.max(values)),
+                    "median": float(np.median(values)),
+                }
+
+    # Vertex fallback (no surface grid, or the window falls outside it).
     mask = (
-        (x >= min(x0, x1))
-        & (x <= max(x0, x1))
-        & (y >= min(y0, y1))
-        & (y <= max(y0, y1))
+        (x >= lo_x)
+        & (x <= hi_x)
+        & (y >= lo_y)
+        & (y <= hi_y)
         & np.isfinite(z)
     )
     if not np.any(mask):
@@ -318,6 +448,7 @@ def _estimate_dam_span(
     flow_axis: str,
     cfg: dict,
     particle_spacing: float,
+    containment_z: float | None = None,
 ) -> tuple[float, float]:
     search_radius = float(cfg.get("dam_search_radius", 8.0))
     min_span = float(cfg.get("dam_min_span", 2.0))
@@ -416,6 +547,42 @@ def _estimate_dam_span(
         s_min = -min_span / 2.0
         s_max = min_span / 2.0
         width = min_span
+
+    # Lateral containment: grow both ends in 2*dp bands along the dam line
+    # until the terrain just outside the dam reaches the water surface.
+    # Otherwise the reservoir bypasses the (shorter) dam ends laterally.
+    if containment_z is not None:
+        thickness = float(cfg.get("dam_thickness", 0.30))
+        band = 2.0 * particle_spacing
+
+        def _line_min(side_lo: float, side_hi: float) -> float | None:
+            if flow_axis == "x":
+                stats = _cell_stats(
+                    x, y, z,
+                    dam_x - thickness / 2.0, dam_x + thickness / 2.0,
+                    dam_y + side_lo, dam_y + side_hi,
+                )
+            else:
+                stats = _cell_stats(
+                    x, y, z,
+                    dam_x + side_lo, dam_x + side_hi,
+                    dam_y - thickness / 2.0, dam_y + thickness / 2.0,
+                )
+            return stats["min"] if stats is not None else None
+
+        while s_min > -max_span / 2.0:
+            zmin = _line_min(s_min - band, s_min)
+            if zmin is None or zmin >= containment_z - 1e-6:
+                break
+            s_min = max(s_min - band, -max_span / 2.0)
+        while s_max < max_span / 2.0:
+            zmin = _line_min(s_max, s_max + band)
+            if zmin is None or zmin >= containment_z - 1e-6:
+                break
+            s_max = min(s_max + band, max_span / 2.0)
+
+        width = s_max - s_min
+
     if width > max_span:
         s_min = -max_span / 2.0
         s_max = max_span / 2.0
@@ -457,7 +624,9 @@ def _make_wall_boxes(
     """
     Build terrain-anchored wall segments with a COMMON crest elevation.
 
-    z0 = local terrain elevation - embedment  (terrain-anchored bottom)
+    z0 = local terrain MINIMUM - embedment  (anchored below the lowest
+                                              ground in the footprint so no
+                                              slot can open under the dam)
     z1 = common_crest_z                       (same for ALL segments)
 
     NO fallback is applied. If z1 <= z0 for any segment, validation will fail.
@@ -491,7 +660,9 @@ def _make_wall_boxes(
             ground_z = default_ground_z
             terrain_max = None
         else:
-            ground_z = stats["median"]
+            # Anchor at the footprint LOWEST terrain point: a median anchor
+            # leaves an open slot under segments whose ground dips below it.
+            ground_z = stats["min"]
             terrain_max = stats["max"]
 
         z0 = ground_z - embedment
@@ -533,6 +704,7 @@ def _make_reservoir_boxes(
     y: np.ndarray,
     z: np.ndarray,
     default_ground_z: float,
+    water_surface_z: float | None = None,
 ) -> tuple[list[FluidBox], float | None]:
     """
     Build terrain-following reservoir segments with ONE common horizontal
@@ -541,7 +713,10 @@ def _make_reservoir_boxes(
     z0 = bed_z + fluid_bed_clearance
     z1 = common_water_surface_z  (same for ALL segments)
 
-    NO fallback is applied. If z1 <= z0 for any segment, validation will fail.
+    The surface is normally passed in (basin floor + water_depth, capped
+    below the dam crest); it is only derived from the beds when absent.
+    Segments whose bed sits at/above the water line are dropped (they would
+    have no meaningful water column).
     """
     if span_end <= span_start:
         return [], None
@@ -597,9 +772,13 @@ def _make_reservoir_boxes(
     if not bed_elevations:
         return [], None
 
-    # Common water surface: above every bed by at least water_depth.
-    max_bed = max(bed_elevations)
-    common_water_surface_z = max_bed + water_depth
+    # Common water surface: passed in by the caller (basin floor + requested
+    # depth, capped below the dam crest).  Only derived from the segment beds
+    # when absent so a single elevation is still shared by every segment.
+    if water_surface_z is not None:
+        common_water_surface_z = float(water_surface_z)
+    else:
+        common_water_surface_z = min(bed_elevations) + water_depth
 
     # Second pass: create boxes.
     boxes: list[FluidBox] = []
@@ -620,7 +799,10 @@ def _make_reservoir_boxes(
 
         actual_depth = z1 - z0
 
-        # NO FALLBACK. If actual_depth <= 0, validation will catch it.
+        # Segments whose bed sits at/above the water line would only get a
+        # degenerate (< 1 dp) water column: drop them.
+        if actual_depth < particle_spacing - 1e-9:
+            continue
 
         boxes.append(
             FluidBox(
@@ -776,10 +958,13 @@ def _build_xml(
     stl_attribute = quoteattr(stl_reference)
 
     fixed_wall_xml = ""
-    if geom.fixed_boxes:
-        fixed_wall_xml = "                    <!-- Terrain-anchored fixed dam segments -->\n"
+    fixed_wall_boxes = list(geom.fixed_boxes)
+    if geom.apron_box is not None:
+        fixed_wall_boxes.append(geom.apron_box)
+    if fixed_wall_boxes:
+        fixed_wall_xml = "                    <!-- Terrain-anchored fixed dam segments + breach apron -->\n"
         fixed_wall_xml += f"                    <setmkbound mk=\"{FIXED_WALL_MK}\" />\n\n"
-        for box in geom.fixed_boxes:
+        for box in fixed_wall_boxes:
             fixed_wall_xml += _drawbox_xml(box)
 
     breach_wall_xml = ""
@@ -1062,6 +1247,7 @@ def _validate_geometry(
     cfg: dict,
     geom: DamGeometry,
     reservoir: ReservoirGeometry,
+    terrain: dict[str, np.ndarray],
     pointmin: tuple[float, float, float],
     pointmax: tuple[float, float, float],
     motion_path: Path,
@@ -1165,6 +1351,68 @@ def _validate_geometry(
             check(
                 box.z0 >= box.cell_terrain_max + fluid_clearance - 1e-3,
                 f"Reservoir segment {i} does not overlap local terrain",
+            )
+
+    # --- Fill level vs crest (no overtopping at rest) ---
+    if reservoir.water_surface_z is not None and geom.crest_z is not None:
+        check(
+            reservoir.water_surface_z < geom.crest_z - 1e-6,
+            f"Water surface ({reservoir.water_surface_z:.4f}) stays below "
+            f"dam crest ({geom.crest_z:.4f})",
+        )
+
+    # --- Lateral containment: terrain just beyond each dam end must reach
+    #     the water surface, otherwise the reservoir bypasses the dam ends.
+    if reservoir.water_surface_z is not None and geom.span_end > geom.span_start:
+        band = 2.0 * float(cfg.get("particle_spacing", 0.1))
+        half_thickness = geom.thickness / 2.0
+
+        def _end_band_min(lo: float, hi: float) -> float | None:
+            if geom.flow_axis == "x":
+                stats = _cell_stats(
+                    terrain["x"], terrain["y"], terrain["z"],
+                    geom.center_x - half_thickness,
+                    geom.center_x + half_thickness,
+                    lo, hi,
+                )
+            else:
+                stats = _cell_stats(
+                    terrain["x"], terrain["y"], terrain["z"],
+                    lo, hi,
+                    geom.center_y - half_thickness,
+                    geom.center_y + half_thickness,
+                )
+            return stats["min"] if stats is not None else None
+
+        for label, lo, hi in (
+            ("low end", geom.span_start - band, geom.span_start),
+            ("high end", geom.span_end, geom.span_end + band),
+        ):
+            zmin = _end_band_min(lo, hi)
+            if zmin is not None:
+                check(
+                    zmin >= reservoir.water_surface_z - 1e-3,
+                    f"Dam {label} terrain reaches water surface "
+                    f"(terrain={zmin:.4f} < "
+                    f"surface={reservoir.water_surface_z:.4f})",
+                )
+
+    # --- Breach apron ---
+    if geom.apron_box is not None:
+        ab = geom.apron_box
+        check(ab.z0 < ab.z1, "Breach apron bottom is below top")
+        check(
+            ab.z0 > pointmin[2] and ab.z1 < pointmax[2],
+            "Breach apron fits inside the simulation domain",
+        )
+        if geom.breach_box is not None:
+            bb = geom.breach_box
+            check(
+                ab.x0 <= bb.x0 + 1e-6
+                and ab.x1 >= bb.x1 - 1e-6
+                and ab.y0 <= bb.y0 + 1e-6
+                and ab.y1 >= bb.y1 - 1e-6,
+                "Breach apron covers the gate footprint",
             )
 
     # --- Breach validation ---
@@ -1439,6 +1687,12 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
 
     terrain = _load_terrain(cfg)
 
+    if not _load_surface_grid(cfg):
+        print(
+            "WARNING: terrain STL could not be rasterized; using sparse NPZ "
+            "vertex statistics (containment/anchoring checks may be unreliable)."
+        )
+
     x = terrain["x"]
     y = terrain["y"]
     z = terrain["z"]
@@ -1468,8 +1722,74 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
             x, y, z, dam_x, dam_y, dam_search_radius,
         )
 
+    # --- Sizing inputs needed before the span is estimated -----------------
+    dam_thickness = _positive(cfg, "dam_thickness", 0.30)
+    dam_crest_height = _positive(cfg, "dam_crest_height", 0.60)
+    dam_embedment = _non_negative(cfg, "dam_embedment", 0.10)
+    dam_segment_length = _positive(cfg, "dam_segment_length", 0.50)
+
+    center_stats = _cell_stats(
+        x, y, z,
+        dam_x - max(particle_spacing, 0.25),
+        dam_x + max(particle_spacing, 0.25),
+        dam_y - max(particle_spacing, 0.25),
+        dam_y + max(particle_spacing, 0.25),
+    )
+
+    dam_center_z = center_stats["median"] if center_stats else dam_z
+
+    # Common dam crest elevation derived from dam center terrain reference.
+    dam_crest_z = dam_center_z + dam_crest_height
+
+    reservoir_length = _positive(cfg, "reservoir_length", 3.0)
+    if "reservoir_water_depth" in cfg:
+        reservoir_water_depth = _positive(cfg, "reservoir_water_depth", 0.50)
+    else:
+        # Legacy key kept so old configuration files keep working.
+        reservoir_water_depth = _positive(cfg, "reservoir_min_water_depth", 0.50)
+    reservoir_freeboard = _non_negative(cfg, "reservoir_freeboard", 0.05)
+    reservoir_segments = int(cfg.get("reservoir_segments", 6))
+    fluid_bed_clearance = _non_negative(cfg, "fluid_bed_clearance", 0.02)
+
+    if reservoir_segments <= 0:
+        reservoir_segments = 1
+
+    # Fill level: basin FLOOR (over the reservoir corridor) + requested
+    # depth, hard-capped below the dam crest.  This single elevation feeds
+    # both the span containment rule and every reservoir segment, so the
+    # containment target and the final water line are always identical.
+    min_span_cfg = float(cfg.get("dam_min_span", 2.0))
+    if flow_axis == "x":
+        corridor_face = dam_x + upstream_sign * dam_thickness / 2.0
+    else:
+        corridor_face = dam_y + upstream_sign * dam_thickness / 2.0
+    if upstream_sign > 0:
+        corridor_along0 = corridor_face
+        corridor_along1 = corridor_face + reservoir_length
+    else:
+        corridor_along0 = corridor_face - reservoir_length
+        corridor_along1 = corridor_face
+    if flow_axis == "x":
+        corridor_stats = _cell_stats(
+            x, y, z,
+            corridor_along0, corridor_along1,
+            dam_y - min_span_cfg / 2.0, dam_y + min_span_cfg / 2.0,
+        )
+    else:
+        corridor_stats = _cell_stats(
+            x, y, z,
+            dam_x - min_span_cfg / 2.0, dam_x + min_span_cfg / 2.0,
+            corridor_along0, corridor_along1,
+        )
+    corridor_floor = corridor_stats["min"] if corridor_stats else dam_center_z
+    target_water_surface_z = min(
+        corridor_floor + reservoir_water_depth,
+        dam_crest_z - reservoir_freeboard,
+    )
+
     span_rel_min, span_rel_max = _estimate_dam_span(
         x, y, z, dam_x, dam_y, flow_axis, cfg, particle_spacing,
+        containment_z=target_water_surface_z,
     )
 
     if flow_axis == "x":
@@ -1496,24 +1816,6 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
 
     local_terrain_min = local_stats["min"] if local_stats else terrain_z_min
     local_terrain_max = local_stats["max"] if local_stats else terrain_z_max
-
-    center_stats = _cell_stats(
-        x, y, z,
-        dam_x - max(particle_spacing, 0.25),
-        dam_x + max(particle_spacing, 0.25),
-        dam_y - max(particle_spacing, 0.25),
-        dam_y + max(particle_spacing, 0.25),
-    )
-
-    dam_center_z = center_stats["median"] if center_stats else dam_z
-
-    dam_thickness = _positive(cfg, "dam_thickness", 0.30)
-    dam_crest_height = _positive(cfg, "dam_crest_height", 0.60)
-    dam_embedment = _non_negative(cfg, "dam_embedment", 0.10)
-    dam_segment_length = _positive(cfg, "dam_segment_length", 0.50)
-
-    # Common dam crest elevation derived from dam center terrain reference.
-    dam_crest_z = dam_center_z + dam_crest_height
 
     breach_enabled_cfg = bool(cfg.get("breach_enabled", True))
     breach_width_cfg = _non_negative(cfg, "breach_width", 1.0)
@@ -1640,13 +1942,38 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
         gate_final_z = breach_box.z0 + actual_gate_lift
         gate_top_final_z = breach_box.z1 + actual_gate_lift
 
-    reservoir_length = _positive(cfg, "reservoir_length", 3.0)
-    reservoir_water_depth = _positive(cfg, "reservoir_water_depth", 0.50)
-    reservoir_segments = int(cfg.get("reservoir_segments", 6))
-    fluid_bed_clearance = _non_negative(cfg, "fluid_bed_clearance", 0.02)
-
-    if reservoir_segments <= 0:
-        reservoir_segments = 1
+    # Solid apron under the breach landing zone: the single-layer heightfield
+    # terrain is punched through by the gate jet otherwise (sub-terrain void).
+    apron_box: WallBox | None = None
+    if breach_enabled and breach_box is not None and bool(
+        cfg.get("breach_apron", True)
+    ):
+        apron_runout = max(0.2, 2.0 * particle_spacing)
+        ax0, ax1 = breach_box.x0, breach_box.x1
+        ay0, ay1 = breach_box.y0, breach_box.y1
+        if flow_axis == "x":
+            if upstream_sign > 0:
+                ax0 -= apron_runout
+            else:
+                ax1 += apron_runout
+        else:
+            if upstream_sign > 0:
+                ay0 -= apron_runout
+            else:
+                ay1 += apron_runout
+        apron_stats = _cell_stats(x, y, z, ax0, ax1, ay0, ay1)
+        if apron_stats is not None:
+            apron_box = WallBox(
+                x0=float(ax0),
+                x1=float(ax1),
+                y0=float(ay0),
+                y1=float(ay1),
+                z0=float(apron_stats["min"] - max(0.2, 3.0 * particle_spacing)),
+                z1=float(apron_stats["max"]),
+                ground_z=float(apron_stats["max"]),
+                cell_terrain_max=apron_stats["max"],
+                kind="apron",
+            )
 
     reservoir_boxes, common_water_surface_z = _make_reservoir_boxes(
         flow_axis=flow_axis,
@@ -1663,6 +1990,7 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
         particle_spacing=particle_spacing,
         x=x, y=y, z=z,
         default_ground_z=dam_center_z,
+        water_surface_z=target_water_surface_z,
     )
 
     reservoir = ReservoirGeometry(boxes=reservoir_boxes)
@@ -1704,6 +2032,7 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
         local_terrain_max=local_terrain_max,
         fixed_boxes=fixed_boxes,
         breach_box=breach_box,
+        apron_box=apron_box,
         breach_center=breach_center if breach_enabled else None,
         breach_width=breach_width if breach_enabled else None,
         fixed_left_width=fixed_left_width if breach_enabled else None,
@@ -1739,6 +2068,14 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
         z_max_candidates.append(breach_box.z1)
         if gate_top_final_z is not None:
             z_max_candidates.append(gate_top_final_z)
+
+    if apron_box is not None:
+        x_min_candidates.append(apron_box.x0)
+        x_max_candidates.append(apron_box.x1)
+        y_min_candidates.append(apron_box.y0)
+        y_max_candidates.append(apron_box.y1)
+        z_min_candidates.append(apron_box.z0)
+        z_max_candidates.append(apron_box.z1)
 
     for box in reservoir_boxes:
         x_min_candidates.append(box.x0)
@@ -1841,6 +2178,8 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
 
     # --- Simulation Domain Validation ---
     wall_boxes_all = list(fixed_boxes)
+    if apron_box is not None:
+        wall_boxes_all.append(apron_box)
     if breach_box is not None:
         wall_boxes_all.append(breach_box)
 
@@ -1897,6 +2236,7 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
         cfg=cfg,
         geom=dam_geometry,
         reservoir=reservoir,
+        terrain={"x": x, "y": y, "z": z},
         pointmin=pointmin,
         pointmax=pointmax,
         motion_path=motion_path,
@@ -2005,6 +2345,15 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
             "moving_bounds_final": moving_bounds_final,
             "motion_file": str(motion_path) if breach_enabled else None,
             "motion_duration": motion_duration,
+            "apron": (
+                {
+                    "x0": apron_box.x0, "x1": apron_box.x1,
+                    "y0": apron_box.y0, "y1": apron_box.y1,
+                    "z0": apron_box.z0, "z1": apron_box.z1,
+                }
+                if apron_box is not None
+                else None
+            ),
         },
         "bounds": {
             "terrain": {

@@ -33,14 +33,16 @@
   "dam_valley_threshold": 0.30,
 
   "reservoir_length": 3.0,
-  "reservoir_min_water_depth": 0.50,
-  "reservoir_segments": 6,
-  "fluid_bed_clearance": 0.20,
+  "reservoir_water_depth": 0.50,
+  "reservoir_freeboard": 0.05,
+  "reservoir_segments": 12,
+  "fluid_bed_clearance": 0.02,
 
   "breach_enabled": true,
   "breach_width": 1.0,
   "breach_time": 0.25,
   "breach_lift_duration": 0.30,
   "breach_lift_distance": 0.50,
-  "breach_motion_steps": 50
+  "breach_motion_steps": 50,
+  "breach_apron": true
 }
