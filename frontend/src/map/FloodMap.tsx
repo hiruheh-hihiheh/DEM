@@ -7,23 +7,33 @@ import * as maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 import type { DamGeoJSON } from '../types/dam'
+import {
+  basemapStyle,
+  MAP_INITIAL_VIEW,
+  type BasemapMode,
+} from './basemaps'
 
 interface FloodMapProps {
   damsData: DamGeoJSON | null
   selectedDam?: string
   onDamSelect?: (damId: string) => void
+  /** Basemap mode (default `standard`). Remount via `key` to switch style. */
+  basemap?: BasemapMode
 }
 
 export const FloodMap: React.FC<FloodMapProps> = ({
   damsData,
   selectedDam,
   onDamSelect,
+  basemap = 'standard',
 }) => {
   const mapContainer =
     useRef<HTMLDivElement | null>(null)
 
   const map =
     useRef<maplibregl.Map | null>(null)
+
+  const styleLoadedRef = useRef(false)
 
   const [isLoading, setIsLoading] =
     useState(true)
@@ -36,12 +46,14 @@ export const FloodMap: React.FC<FloodMapProps> = ({
       return
     }
 
+    setIsLoading(true)
+    setError(null)
+
     const mapInstance = new maplibregl.Map({
       container: mapContainer.current,
-      style:
-        'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
-      center: [78.9629, 22.5937],
-      zoom: 4,
+      style: basemapStyle(basemap),
+      center: MAP_INITIAL_VIEW.center,
+      zoom: MAP_INITIAL_VIEW.zoom,
       attributionControl: false,
     })
 
@@ -62,14 +74,45 @@ export const FloodMap: React.FC<FloodMapProps> = ({
     )
 
     mapInstance.on('load', () => {
+      styleLoadedRef.current = true
       setIsLoading(false)
+      setError(null)
     })
 
+    // Surface genuine style failures (e.g. offline) instead of spinning
+    // forever; per-tile noise after a successful load is intentionally
+    // ignored so a flaky provider never blanks the map.
+    mapInstance.on('error', (ev: maplibregl.ErrorEvent) => {
+      if (styleLoadedRef.current) return
+      const message = String(ev?.error?.message ?? '').trim()
+      setIsLoading(false)
+      setError(
+        message
+          ? `Basemap failed to load — ${message}`
+          : 'Basemap failed to load. Check the network connection.',
+      )
+    })
+
+    // The map lives inside a responsive layout (window resizes, sidebar
+    // toggles, orientation changes) — keep MapLibre's canvas in sync.
+    const resize = () => mapInstance.resize()
+    const observer =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(resize)
+        : null
+    if (observer && mapContainer.current) {
+      observer.observe(mapContainer.current)
+    }
+    window.addEventListener('resize', resize)
+
     return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', resize)
       mapInstance.remove()
       map.current = null
+      styleLoadedRef.current = false
     }
-  }, [])
+  }, [basemap])
 
   useEffect(() => {
     const mapInstance = map.current
@@ -224,7 +267,10 @@ export const FloodMap: React.FC<FloodMapProps> = ({
     } else {
       mapInstance.once('load', addDamLayer)
     }
-  }, [damsData, onDamSelect])
+  }, [damsData, onDamSelect, basemap])
+
+  // Fly only when the *selection* changes — not on basemap remounts.
+  const prevSelectedRef = useRef<string | null | undefined>(null)
 
   useEffect(() => {
     const mapInstance = map.current
@@ -258,12 +304,18 @@ export const FloodMap: React.FC<FloodMapProps> = ({
       features,
     })
 
+    const selectionChanged =
+      prevSelectedRef.current !== selectedDam
+    prevSelectedRef.current = selectedDam
+
     if (!selectedDam) {
-      mapInstance.flyTo({
-        center: [78.9629, 22.5937],
-        zoom: 4,
-        duration: 1000,
-      })
+      if (selectionChanged) {
+        mapInstance.flyTo({
+          center: MAP_INITIAL_VIEW.center,
+          zoom: MAP_INITIAL_VIEW.zoom,
+          duration: 1000,
+        })
+      }
 
       return
     }
@@ -279,13 +331,15 @@ export const FloodMap: React.FC<FloodMapProps> = ({
       return
     }
 
-    mapInstance.flyTo({
-      center:
-        selectedFeature.geometry.coordinates,
-      zoom: 9,
-      duration: 1200,
-    })
-  }, [selectedDam, damsData])
+    if (selectionChanged) {
+      mapInstance.flyTo({
+        center:
+          selectedFeature.geometry.coordinates,
+        zoom: 9,
+        duration: 1200,
+      })
+    }
+  }, [selectedDam, damsData, basemap])
 
   return (
     <div className="flood-map-container">

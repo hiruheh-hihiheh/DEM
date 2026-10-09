@@ -168,6 +168,130 @@ _ensure_scripts_on_path()
 
 
 # ---------------------------------------------------------------------------
+# output locations (computed at read time from the runner's own config —
+# never reconstructed or hardcoded in the frontend)
+# ---------------------------------------------------------------------------
+
+_SCENARIO_PATHS_CACHE: dict[str, dict[str, str]] = {}
+_DAM_NAMES_CACHE: dict[str, str] | None = None
+
+
+def _rel(path: Path | str) -> str:
+    """Repo-relative POSIX path when inside the repo, absolute otherwise."""
+    try:
+        return Path(path).resolve().relative_to(REPO_ROOT).as_posix()
+    except (ValueError, OSError):
+        return str(path)
+
+
+def scenario_output_paths(scenario_name: str) -> dict[str, str]:
+    """Real output locations of a scenario, straight from the runner config."""
+    cached = _SCENARIO_PATHS_CACHE.get(scenario_name)
+    if cached is not None:
+        return dict(cached)
+
+    from scenario_runner.config import load_scenario
+
+    try:
+        scenario = load_scenario(scenario_name)
+    except Exception:
+        return {}
+
+    paths = {
+        "scenario_dir": _rel(scenario.data_root),
+        "processed_terrain": _rel(scenario.data_root / "processed"),
+        "sph_terrain": _rel(scenario.data_root / "sph"),
+        "manifest": _rel(scenario.manifest_path),
+        "runs_root": _rel(scenario.runs_root),
+    }
+    inputs = getattr(scenario, "inputs", None)
+    dem = inputs.get("dem") if isinstance(inputs, dict) else None
+    if dem:
+        paths["dem_input"] = _rel(dem)
+
+    _SCENARIO_PATHS_CACHE[scenario_name] = paths
+    return dict(paths)
+
+
+def _dam_names() -> dict[str, str]:
+    """dam id -> display name (built once per process from the inventory)."""
+    global _DAM_NAMES_CACHE
+    if _DAM_NAMES_CACHE is None:
+        names: dict[str, str] = {}
+        try:
+            from app.services.dam_service import load_dam_data
+
+            for feature in load_dam_data().get("features", []):
+                props = feature.get("properties") or {}
+                # Raw inventory uses PIC/dm_name; the API-normalized form
+                # uses pic/name — accept either so nothing depends on one.
+                dam_id = props.get("pic") or props.get("PIC")
+                name = props.get("name") or props.get("dm_name")
+                if dam_id and name:
+                    names[str(dam_id)] = str(name)
+        except Exception:
+            pass
+        _DAM_NAMES_CACHE = names
+    return _DAM_NAMES_CACHE
+
+
+def job_output_paths(job: dict[str, Any]) -> dict[str, str]:
+    """Every real output location of one job (scenario -> run -> result)."""
+    paths: dict[str, str] = {}
+
+    scenario = job.get("scenario")
+    if scenario and scenario != "import":
+        paths.update(scenario_output_paths(str(scenario)))
+
+    run_dir = job.get("run_dir")
+    if run_dir:
+        rd = Path(str(run_dir))
+        paths["run_dir"] = _rel(rd)
+        for key, filename in (
+            ("run_log", "run.log"),
+            ("metadata", "metadata.json"),
+        ):
+            if (rd / filename).exists():
+                paths[key] = _rel(rd / filename)
+        try:
+            sim_dir = JobManager._find_sim_dir(rd)
+        except Exception:
+            sim_dir = None
+        if sim_dir is not None:
+            case_xml = sim_dir / "HADR_DamBreak_out" / "HADR_DamBreak.xml"
+            if case_xml.exists():
+                paths["case_xml"] = _rel(case_xml)
+
+    sim_output = job.get("simulation_output")
+    if sim_output:
+        paths["simulation_output"] = _rel(str(sim_output))
+
+    job_log = JOBS_DIR / f"{job.get('id', '')}.log"
+    if job_log.exists():
+        paths["job_log"] = _rel(job_log)
+
+    result = job.get("result") or {}
+    result_path = result.get("path")
+    if not result_path and result.get("available"):
+        result_path = str(JOBS_DIR / str(job.get("id")) / "result")
+    if result_path:
+        paths["result_package"] = _rel(str(result_path))
+
+    return paths
+
+
+def _decorate(job: dict[str, Any]) -> dict[str, Any]:
+    """Attach read-time view fields (paths, dam name) to a job record."""
+    try:
+        job["paths"] = job_output_paths(job)
+    except Exception:
+        job["paths"] = {}
+    dam_id = job.get("dam_id")
+    job["dam_name"] = _dam_names().get(str(dam_id)) if dam_id else None
+    return job
+
+
+# ---------------------------------------------------------------------------
 # JobManager
 # ---------------------------------------------------------------------------
 
@@ -230,14 +354,15 @@ class JobManager:
         jobs.sort(
             key=lambda j: str(j.get("created_at") or ""), reverse=True
         )
-        return jobs
+        return [_decorate(j) for j in jobs]
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
             job = self._jobs.get(job_id)
             if job is not None:
-                return copy.deepcopy(job)
-        return self._runner_run_record(job_id)
+                return _decorate(copy.deepcopy(job))
+        record = self._runner_run_record(job_id)
+        return _decorate(record) if record is not None else None
 
     def _discover_runner_runs(self) -> list[dict[str, Any]]:
         """Runs launched directly from the CLI (scenarios/<x>/runs/...)."""
@@ -480,7 +605,7 @@ class JobManager:
             daemon=True,
         )
         thread.start()
-        return copy.deepcopy(job)
+        return _decorate(copy.deepcopy(job))
 
     def create_import_job(
         self, zip_path: Path, original_name: str
@@ -508,7 +633,7 @@ class JobManager:
             daemon=True,
         )
         thread.start()
-        return copy.deepcopy(job)
+        return _decorate(copy.deepcopy(job))
 
     def _new_record(
         self,

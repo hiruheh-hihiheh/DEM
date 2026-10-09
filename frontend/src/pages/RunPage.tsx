@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchJob, processJobResult } from '../services/api'
 import { LogConsole } from '../components/LogConsole'
+import { OutputPaths } from '../components/OutputPaths'
 import { ProgressStages } from '../components/ProgressStages'
 import type { JobSummary } from '../types/simulation'
 
@@ -101,11 +102,16 @@ export const RunPage: React.FC<RunPageProps> = ({
     <div className="page">
       <div className="page__header">
         <div>
-          <h1 className="page__title">{job.scenario_display}</h1>
+          <h1 className="page__title">{job.dam_name ?? job.scenario_display}</h1>
           <p className="page__subtitle">
             <span className="mono">{job.id}</span>
             {' · '}
             {job.source === 'web' ? 'web job' : 'CLI run'}
+            {job.run_id && (
+              <>
+                {' · '}Run <span className="mono">{job.run_id}</span>
+              </>
+            )}
             {job.created_at && ` · started ${new Date(job.created_at).toLocaleString()}`}
           </p>
         </div>
@@ -231,6 +237,11 @@ export const RunPage: React.FC<RunPageProps> = ({
           </p>
         </div>
       </div>
+
+      <OutputPaths
+        paths={job.paths}
+        note="Reported by the backend for this run (repo-relative unless outside the repository)."
+      />
     </div>
   )
 }

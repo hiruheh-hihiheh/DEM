@@ -141,9 +141,14 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   job.type !== 'import'
                 return (
                   <tr key={job.id}>
-                    <td className="mono">{job.id}</td>
+                    <td
+                      className="mono"
+                      title={job.paths?.run_dir ?? job.run_dir ?? undefined}
+                    >
+                      {job.id}
+                    </td>
                     <td>{job.scenario_display}</td>
-                    <td>{job.dam_id ?? job.scenario}</td>
+                    <td>{job.dam_name ?? job.dam_id ?? job.scenario}</td>
                     <td>
                       {job.created_at
                         ? new Date(job.created_at).toLocaleString()

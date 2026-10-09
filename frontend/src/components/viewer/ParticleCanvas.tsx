@@ -58,7 +58,9 @@ export const ParticleCanvas: React.FC<Props> = ({
 
   // Latest props for the long-lived render/listener closure.
   const propsRef = useRef({ manifest, frames, terrain, frame, layers })
-  propsRef.current = { manifest, frames, terrain, frame, layers }
+  useEffect(() => {
+    propsRef.current = { manifest, frames, terrain, frame, layers }
+  })
 
   const renderReqRef = useRef(0)
   const requestRenderRef = useRef<() => void>(() => {})
@@ -339,7 +341,7 @@ export const ParticleCanvas: React.FC<Props> = ({
   useEffect(() => {
     terrainCacheRef.current = null
     requestRenderRef.current()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [manifest, terrain])
 
   useEffect(() => {
@@ -428,9 +430,12 @@ export const ParticleCanvas: React.FC<Props> = ({
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('contextmenu', onContext)
       observer.disconnect()
-      if (renderReqRef.current) cancelAnimationFrame(renderReqRef.current)
+      if (renderReqRef.current) {
+        cancelAnimationFrame(renderReqRef.current)
+        renderReqRef.current = 0
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [])
 
   return <canvas ref={canvasRef} className="viewer-3d__canvas" />

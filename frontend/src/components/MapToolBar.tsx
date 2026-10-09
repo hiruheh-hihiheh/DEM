@@ -1,50 +1,44 @@
 import React from 'react'
+import type { BasemapMode } from '../map/basemaps'
 
-export const MapToolbar: React.FC = () => {
+interface MapToolbarProps {
+  /** Current basemap mode. */
+  basemap: BasemapMode
+  /** Called when the user picks the other basemap. */
+  onBasemapChange: (mode: BasemapMode) => void
+  /** Optional live status text shown on the right (e.g. "6,644 dams loaded"). */
+  statusText?: string
+}
+
+/**
+ * Map toolbar: a working `[Standard][Satellite]` basemap switch plus a
+ * live status indicator. (The old Layers/Legend/Export buttons were dead
+ * controls and have been replaced.)
+ */
+export const MapToolbar: React.FC<MapToolbarProps> = ({
+  basemap,
+  onBasemapChange,
+  statusText,
+}) => {
   return (
     <div className="map-toolbar">
-      <div className="map-toolbar__group">
+      <div className="map-toolbar__group" role="group" aria-label="Basemap style">
+        <span className="map-toolbar__label">Basemap</span>
         <button
           type="button"
-          className="map-toolbar__btn"
-          title="Map layers"
-          aria-label="Toggle map layers"
+          className={`map-toolbar__btn${basemap === 'standard' ? ' map-toolbar__btn--active' : ''}`}
+          aria-pressed={basemap === 'standard'}
+          onClick={() => onBasemapChange('standard')}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polygon points="12 2 2 7 12 12 22 7 12 2" />
-            <polyline points="2 17 12 22 22 17" />
-            <polyline points="2 12 12 17 22 12" />
-          </svg>
-          Layers
+          Standard
         </button>
-
         <button
           type="button"
-          className="map-toolbar__btn"
-          title="Map legend"
-          aria-label="Show map legend"
+          className={`map-toolbar__btn${basemap === 'satellite' ? ' map-toolbar__btn--active' : ''}`}
+          aria-pressed={basemap === 'satellite'}
+          onClick={() => onBasemapChange('satellite')}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="7" height="7" rx="1" />
-            <rect x="14" y="3" width="7" height="7" rx="1" />
-            <rect x="3" y="14" width="7" height="7" rx="1" />
-            <rect x="14" y="14" width="7" height="7" rx="1" />
-          </svg>
-          Legend
-        </button>
-
-        <button
-          type="button"
-          className="map-toolbar__btn map-toolbar__btn--export"
-          title="Export results"
-          aria-label="Export simulation results"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
-          </svg>
-          Export
+          Satellite
         </button>
       </div>
 
@@ -53,7 +47,7 @@ export const MapToolbar: React.FC = () => {
           className="map-toolbar__indicator"
           aria-hidden="true"
         />
-        Geospatial Engine Active
+        {statusText ?? 'Geospatial Engine Active'}
       </div>
     </div>
   )

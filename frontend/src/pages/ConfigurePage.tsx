@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { createJob } from '../services/api'
+import { useSystemStatus } from '../services/useSystemStatus'
 import type {
   CreateJobRequest,
   ScenarioInfo,
@@ -12,6 +13,8 @@ interface ConfigurePageProps {
   preferredScenario?: string | null
   onStarted: (jobId: string) => void
   onWatchRunning: (jobId: string) => void
+  /** Open the Settings page (DualSPHysics configuration). */
+  onOpenSettings?: () => void
 }
 
 type ScenarioType = 'normal' | 'partial' | 'full' | 'extreme'
@@ -56,11 +59,16 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
   preferredScenario,
   onStarted,
   onWatchRunning,
+  onOpenSettings,
 }) => {
   const readyScenarios = useMemo(
     () => scenarios.filter((s) => s.ready),
     [scenarios],
   )
+
+  // Warn up-front when DualSPHysics cannot be resolved — the run would fail
+  // anyway, and the user should know where to fix it.
+  const { status: systemStatus } = useSystemStatus()
 
   const [scenarioName, setScenarioName] = useState<string>('')
   const [custom, setCustom] = useState(false)
@@ -77,14 +85,16 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
 
   // Pick the initial scenario (preferred dam's scenario when provided).
   useEffect(() => {
-    if (scenarioName || readyScenarios.length === 0) return
-    const preferred =
-      (preferredScenario &&
-        readyScenarios.find((s) => s.name === preferredScenario)) ||
-      readyScenarios.find((s) => s.name === 'chouldari') ||
-      readyScenarios[0]
-    setScenarioName(preferred.name)
-    setForm(formFromScenario(preferred))
+    void (async () => {
+      if (scenarioName || readyScenarios.length === 0) return
+      const preferred =
+        (preferredScenario &&
+          readyScenarios.find((s) => s.name === preferredScenario)) ||
+        readyScenarios.find((s) => s.name === 'chouldari') ||
+        readyScenarios[0]
+      setScenarioName(preferred.name)
+      setForm(formFromScenario(preferred))
+    })()
   }, [readyScenarios, scenarioName, preferredScenario])
 
   const resetTo = (s: ScenarioInfo) => {
@@ -202,6 +212,27 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
           </span>
         </div>
       </div>
+
+      {systemStatus && !systemStatus.dualsphysics.ready && (
+        <div className="error-banner">
+          <span>
+            ⚠ DualSPHysics is{' '}
+            {systemStatus.dualsphysics.configured
+              ? `configured but not ready (${systemStatus.dualsphysics.missing.join(', ') || systemStatus.dualsphysics.error || 'binaries missing'})`
+              : 'not configured'}{' '}
+            — simulations will fail until it is set up.
+          </span>
+          {onOpenSettings && (
+            <button
+              type="button"
+              className="btn btn--sm"
+              onClick={onOpenSettings}
+            >
+              Open Settings
+            </button>
+          )}
+        </div>
+      )}
 
       {error && (
         <div className="error-banner">

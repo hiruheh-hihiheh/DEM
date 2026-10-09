@@ -12,6 +12,7 @@ import { Dashboard } from './pages/Dashboard'
 import { DamsPage } from './pages/DamsPage'
 import { HistoryPage } from './pages/HistoryPage'
 import { RunPage } from './pages/RunPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { ViewerPage } from './pages/ViewerPage'
 
 import type { DamGeoJSON } from './types/dam'
@@ -53,7 +54,9 @@ function App() {
   }, [])
 
   useEffect(() => {
-    void refreshJobs()
+    // Kick the initial load off the effect body so state updates are not
+    // applied synchronously during the effect.
+    void Promise.resolve().then(refreshJobs)
     void fetchScenarios()
       .then(setScenarios)
       .catch(() => setScenarios([]))
@@ -145,6 +148,7 @@ function App() {
             onHistory={() => setView('history')}
             onOpenRun={openRun}
             onViewResult={openResult}
+            onOpenSettings={() => setView('settings')}
           />
         )
       case 'dams':
@@ -167,6 +171,7 @@ function App() {
             preferredScenario={preferredScenario}
             onStarted={jobStarted}
             onWatchRunning={openRun}
+            onOpenSettings={() => setView('settings')}
           />
         )
       case 'run':
@@ -210,6 +215,8 @@ function App() {
             <div className="empty-state">No result selected.</div>
           </div>
         )
+      case 'settings':
+        return <SettingsPage onBack={() => setView('dashboard')} />
     }
   }
 

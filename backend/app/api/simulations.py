@@ -18,6 +18,8 @@ from app.services.sph.job_manager import (
     JOBS_DIR,
     JobConflict,
     JobError,
+    _ensure_scripts_on_path,
+    _rel as _repo_rel,
     get_manager,
     scenario_catalog,
 )
@@ -149,6 +151,43 @@ def list_scenarios():
             status_code=500,
             detail=f"Cannot read scenario catalogue: {exc}",
         ) from exc
+
+
+@router.get("/scenarios/{scenario_name}/dem-hillshade")
+def scenario_dem_hillshade(scenario_name: str):
+    """Grayscale + hillshade preview of the scenario's real DEM, in WGS84.
+
+    Degrades to ``available: false`` (HTTP 200) with an explanatory error so
+    the map can keep working without the terrain layer.
+    """
+    _ensure_scripts_on_path()
+    from scenario_runner.config import ScenarioError, load_scenario
+
+    try:
+        scenario = load_scenario(scenario_name)
+    except ScenarioError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Cannot load scenario '{scenario_name}': {exc}",
+        ) from exc
+
+    inputs = getattr(scenario, "inputs", None)
+    dem = inputs.get("dem") if isinstance(inputs, dict) else None
+    if not dem:
+        return {
+            "available": False,
+            "error": f"Scenario '{scenario_name}' defines no input DEM.",
+        }
+
+    from app.services.terrain.hillshade import render_dem_preview
+
+    payload = render_dem_preview(dem)
+    if payload.get("available"):
+        payload["source"] = _repo_rel(dem)
+        payload["scenario"] = scenario_name
+    return payload
 
 
 @router.post("/jobs", status_code=202)

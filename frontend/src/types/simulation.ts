@@ -82,6 +82,15 @@ export interface JobSummary {
   run_id: string | null
   run_dir: string | null
   simulation_output: string | null
+  /** Human-readable dam name resolved server-side from the inventory. */
+  dam_name?: string | null
+  /**
+   * Real output locations (scenario dir, run dir, logs, result package, …)
+   * computed by the backend from the Scenario Runner's own configuration.
+   * Repo-relative with forward slashes when inside the repo, absolute
+   * otherwise. Never invented in the frontend.
+   */
+  paths?: Record<string, string>
   frame_progress: { done: number; total: number } | null
   error: string | null
   result: JobResultInfo

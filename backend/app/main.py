@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.dams import router as dams_router
 from app.api.simulations import router as simulations_router
+from app.api.system import router as system_router
 
 
 app = FastAPI(
@@ -25,6 +26,7 @@ app.add_middleware(
 
 app.include_router(dams_router)
 app.include_router(simulations_router)
+app.include_router(system_router)
 
 
 @app.get("/")

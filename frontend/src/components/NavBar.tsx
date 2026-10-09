@@ -7,6 +7,7 @@ export type View =
   | 'run'
   | 'history'
   | 'viewer'
+  | 'settings'
 
 interface NavBarProps {
   view: View
@@ -21,6 +22,7 @@ const TABS: { id: View; label: string }[] = [
   { id: 'configure', label: 'New simulation' },
   { id: 'run', label: 'Progress' },
   { id: 'history', label: 'History' },
+  { id: 'settings', label: 'Settings' },
 ]
 
 export const NavBar: React.FC<NavBarProps> = ({

@@ -41,8 +41,10 @@ export const LogConsole: React.FC<LogConsoleProps> = ({
       }
     }
 
-    setLines([])
-    setOffset(0)
+    queueMicrotask(() => {
+      setLines([])
+      setOffset(0)
+    })
     void poll()
 
     return () => {

@@ -8,8 +8,20 @@ import type {
   ResultManifest,
   ScenarioInfo,
 } from '../types/simulation'
+import type {
+  DemHillshade,
+  DualSPHysicsStatus,
+  SystemStatus,
+} from '../types/system'
 
-export const API_BASE = 'http://127.0.0.1:8000/api'
+/**
+ * Backend base URL. Configurable per deployment via the environment
+ * (`VITE_API_BASE`); the local default matches the documented uvicorn
+ * address — no other hardcoded host/ports exist in the app code.
+ */
+export const API_BASE: string =
+  (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/+$/, '') ||
+  'http://127.0.0.1:8000/api'
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -116,6 +128,64 @@ export const uploadImport = async (
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 300000,
   })
+  return response.data
+}
+
+// ---- system readiness + DualSPHysics configuration -------------------------
+// All of these delegate to the backend, which validates through the SAME
+// code the Scenario Runner uses (scripts/scenario_runner/env.py).
+
+export const fetchSystemStatus = async (): Promise<SystemStatus> => {
+  const response = await api.get<SystemStatus>('/system/status', {
+    timeout: 15000,
+  })
+  return response.data
+}
+
+export const fetchDualSPHysics = async (): Promise<DualSPHysicsStatus> => {
+  const response = await api.get<DualSPHysicsStatus>('/system/dualsphysics', {
+    timeout: 15000,
+  })
+  return response.data
+}
+
+/** Validate an installation path without saving it. */
+export const validateDualSPHysics = async (
+  root: string,
+): Promise<DualSPHysicsStatus> => {
+  const response = await api.post<DualSPHysicsStatus>(
+    '/system/dualsphysics/validate',
+    { root },
+    { timeout: 20000 },
+  )
+  return response.data
+}
+
+/**
+ * Persist the path to `scenarios/local.json` (machine-local, git-ignored).
+ * Passing an empty string clears the machine-local setting.
+ */
+export const saveDualSPHysics = async (
+  root: string | null,
+): Promise<DualSPHysicsStatus> => {
+  const response = await api.put<DualSPHysicsStatus>(
+    '/system/dualsphysics',
+    { root },
+    { timeout: 20000 },
+  )
+  return response.data
+}
+
+// ---- terrain preview -------------------------------------------------------
+
+/** Grayscale + hillshade preview of a scenario's real DEM (WGS84-placed). */
+export const fetchDemHillshade = async (
+  scenario: string,
+): Promise<DemHillshade> => {
+  const response = await api.get<DemHillshade>(
+    `/simulations/scenarios/${encodeURIComponent(scenario)}/dem-hillshade`,
+    { timeout: 30000 },
+  )
   return response.data
 }
 

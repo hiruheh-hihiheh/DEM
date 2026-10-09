@@ -1,9 +1,11 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useState } from 'react'
 import { FloodMap } from '../map/FloodMap'
 import { MapToolbar } from '../components/MapToolBar'
 import { MetricCard } from '../components/MetricCard'
+import type { BasemapMode } from '../map/basemaps'
 import type { DamGeoJSON } from '../types/dam'
 import type { JobSummary } from '../types/simulation'
+import { useSystemStatus } from '../services/useSystemStatus'
 
 interface DashboardProps {
   damsData: DamGeoJSON | null
@@ -13,6 +15,8 @@ interface DashboardProps {
   onHistory: () => void
   onOpenRun: (jobId: string) => void
   onViewResult: (jobId: string) => void
+  /** Open the Settings page (DualSPHysics + system status). */
+  onOpenSettings: () => void
 }
 
 const fmtAgo = (iso: string | null): string => {
@@ -24,6 +28,23 @@ const fmtAgo = (iso: string | null): string => {
   return new Date(iso).toLocaleDateString()
 }
 
+/** One row of the system-readiness card. */
+const StatusRow: React.FC<{
+  label: string
+  ready: boolean
+  detail?: string | null
+}> = ({ label, ready, detail }) => (
+  <li className={`system-status__row${ready ? '' : ' system-status__row--warn'}`}>
+    <span className="system-status__icon" aria-hidden="true">
+      {ready ? '✓' : '⚠'}
+    </span>
+    <span className="system-status__label">{label}</span>
+    <span className="system-status__detail" title={detail ?? undefined}>
+      {detail ?? (ready ? 'ready' : 'not ready')}
+    </span>
+  </li>
+)
+
 export const Dashboard: React.FC<DashboardProps> = ({
   damsData,
   jobs,
@@ -32,7 +53,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onHistory,
   onOpenRun,
   onViewResult,
+  onOpenSettings,
 }) => {
+  const [basemap, setBasemap] = useState<BasemapMode>('standard')
+  const { status: systemStatus, loading: statusLoading } = useSystemStatus()
+
   const active = jobs.filter(
     (j) => j.status === 'running' || j.status === 'queued',
   )
@@ -45,6 +70,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         .slice(0, 6),
     [jobs],
   )
+
+  const damCount = damsData?.features.length ?? 0
 
   return (
     <div className="page">
@@ -74,7 +101,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       <div className="app-metrics">
         <MetricCard
           label="Dams"
-          value={damsData ? damsData.features.length.toLocaleString() : '—'}
+          value={damsData ? damCount.toLocaleString() : '—'}
           unit=""
           description="structures in the inventory"
         />
@@ -102,17 +129,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
         />
       </div>
 
-      <div className="dash-grid">
-        <div>
-          <div className="dash-map">
-            <FloodMap
-              damsData={damsData}
-              onDamSelect={onOpenDam}
-            />
-            <MapToolbar />
-          </div>
+      {/* Map-first hero: full width, real height, resizable with the window. */}
+      <section className="dash-hero" aria-label="Dam inventory map">
+        <div className="dash-map dash-map--hero">
+          <FloodMap
+            key={basemap}
+            basemap={basemap}
+            damsData={damsData}
+            onDamSelect={onOpenDam}
+          />
+          <MapToolbar
+            basemap={basemap}
+            onBasemapChange={setBasemap}
+            statusText={
+              damCount > 0
+                ? `${damCount.toLocaleString()} dams loaded · ${basemap === 'satellite' ? 'Satellite' : 'Standard'} basemap`
+                : 'Loading dam inventory…'
+            }
+          />
         </div>
+      </section>
 
+      <div className="dash-grid">
         <div className="panel">
           <div className="panel__title">Recent simulations</div>
           {recent.length === 0 ? (
@@ -125,7 +163,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <li key={job.id} className="recent-item">
                   <div>
                     <div className="recent-item__title">
-                      {job.scenario_display}
+                      {job.dam_name ?? job.scenario_display}
                     </div>
                     <div className="recent-item__meta">
                       {fmtAgo(job.created_at)} ·{' '}
@@ -167,6 +205,68 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+
+        <div className="panel system-status">
+          <div className="panel__title">
+            System status
+            <button
+              type="button"
+              className="btn btn--sm system-status__open"
+              onClick={onOpenSettings}
+            >
+              Settings
+            </button>
+          </div>
+          {statusLoading && !systemStatus ? (
+            <div className="empty-state">Checking the backend…</div>
+          ) : systemStatus ? (
+            <>
+              <ul className="system-status__list">
+                <StatusRow
+                  label="Backend"
+                  ready={systemStatus.backend.ready}
+                  detail={systemStatus.backend.detail}
+                />
+                <StatusRow
+                  label="Dam data"
+                  ready={systemStatus.dam_data.ready}
+                  detail={systemStatus.dam_data.detail}
+                />
+                <StatusRow
+                  label="DEM pipeline"
+                  ready={systemStatus.dem_pipeline.ready}
+                  detail={systemStatus.dem_pipeline.detail}
+                />
+                <StatusRow
+                  label="Scenario Runner"
+                  ready={systemStatus.scenario_runner.ready}
+                  detail={systemStatus.scenario_runner.detail}
+                />
+                <StatusRow
+                  label="DualSPHysics"
+                  ready={systemStatus.dualsphysics.ready}
+                  detail={
+                    systemStatus.dualsphysics.ready
+                      ? `READY · ${systemStatus.dualsphysics.root}`
+                      : systemStatus.dualsphysics.configured
+                        ? `NOT READY · ${systemStatus.dualsphysics.missing.join(', ') || systemStatus.dualsphysics.error || 'check Settings'}`
+                        : 'NOT CONFIGURED — open Settings'
+                  }
+                />
+              </ul>
+              {!systemStatus.dualsphysics.ready && (
+                <p className="system-status__hint">
+                  Simulations need a valid DualSPHysics installation. Configure
+                  it in <button type="button" className="link-btn" onClick={onOpenSettings}>Settings</button>.
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="empty-state">
+              Status unavailable — is the backend running?
+            </div>
           )}
         </div>
       </div>

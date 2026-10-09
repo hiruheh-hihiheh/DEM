@@ -12,6 +12,7 @@ import {
   type ViewerLayers,
 } from '../components/viewer/TimelineControls'
 import { ViewerMap } from '../components/viewer/ViewerMap'
+import { OutputPaths } from '../components/OutputPaths'
 import type { JobSummary, ResultManifest } from '../types/simulation'
 
 interface ViewerPageProps {
@@ -19,7 +20,15 @@ interface ViewerPageProps {
   onBack: () => void
 }
 
-type Tab = 'viewer' | 'map' | 'analytics'
+type Tab = 'map' | 'satellite' | 'viewer' | 'analytics'
+
+/** Human label for how a result was produced (from the backend record). */
+const runTypeLabel = (job: JobSummary | null): string => {
+  if (!job) return 'Result'
+  if (job.type === 'import') return 'Imported result'
+  if (job.source === 'runner') return 'CLI run'
+  return 'Web simulation'
+}
 
 export const ViewerPage: React.FC<ViewerPageProps> = ({ jobId, onBack }) => {
   const [job, setJob] = useState<JobSummary | null>(null)
@@ -38,20 +47,26 @@ export const ViewerPage: React.FC<ViewerPageProps> = ({ jobId, onBack }) => {
   })
   const [resetKey, setResetKey] = useState(0)
   const [processing, setProcessing] = useState(false)
+  const [showOutputs, setShowOutputs] = useState(false)
 
   const frameRef = useRef(0)
-  frameRef.current = frame
+  // Keep the latest frame available to long-lived timers without writing the
+  // ref during render.
+  useEffect(() => {
+    frameRef.current = frame
+  })
 
   // ---- data loading --------------------------------------------------------
   useEffect(() => {
     let cancelled = false
-    setResult(null)
-    setLoadError(null)
-    setMissing(false)
-    setFrame(0)
-    setPlaying(false)
 
     void (async () => {
+      setResult(null)
+      setLoadError(null)
+      setMissing(false)
+      setFrame(0)
+      setPlaying(false)
+
       try {
         const summary = await fetchJob(jobId)
         if (!cancelled) setJob(summary)
@@ -203,6 +218,31 @@ export const ViewerPage: React.FC<ViewerPageProps> = ({ jobId, onBack }) => {
 
   const m: ResultManifest = result.manifest
   const timeKnown = m.frames.time_known
+  const simEndS = timeKnown
+    ? (m.frames.times[m.frames.count - 1] ?? 0)
+    : null
+  const scenarioName = job?.scenario ?? m.source.scenario ?? null
+  const runLabel =
+    job?.run_id ?? (m.source.run_id as string | undefined) ?? null
+
+  const timeline = (
+    <TimelineControls
+      frame={frame}
+      frameCount={m.frames.count}
+      timeKnown={timeKnown}
+      times={m.frames.times}
+      playing={playing}
+      speed={speed}
+      layers={layers}
+      onSeek={seek}
+      onTogglePlay={togglePlay}
+      onSpeed={setSpeed}
+      onToggleLayer={(key) =>
+        setLayers((l) => ({ ...l, [key]: !l[key] }))
+      }
+      onResetCamera={() => setResetKey((k) => k + 1)}
+    />
+  )
 
   return (
     <div className="page page--viewer">
@@ -210,29 +250,76 @@ export const ViewerPage: React.FC<ViewerPageProps> = ({ jobId, onBack }) => {
         <button type="button" className="btn btn--sm" onClick={onBack}>
           ← Back
         </button>
-        <div>
+        <div className="viewer-header__info">
           <div className="viewer-header__title">
-            {job?.scenario_display ?? m.source.scenario ?? 'Result'}
+            {job?.dam_name ?? job?.scenario_display ?? m.source.scenario ?? 'Result'}
           </div>
           <div className="viewer-header__meta">
-            {jobId} · {m.frames.count} frames ·{' '}
-            {m.frames.time_known
-              ? `t = 0…${(m.frames.times[m.frames.count - 1] ?? 0).toFixed(2)} s`
-              : 'frame times unknown'}{' '}
-            · {m.speed.global_max.toFixed(2)} {m.speed.unit} peak
+            <span>
+              Scenario <strong>{scenarioName ?? '—'}</strong>
+            </span>
+            <span>·</span>
+            <span>{runTypeLabel(job)}</span>
+            {runLabel && (
+              <>
+                <span>·</span>
+                <span>
+                  Run <code className="viewer-header__id">{runLabel}</code>
+                </span>
+              </>
+            )}
+            <span>·</span>
+            <span>{m.frames.count} frames</span>
+            <span>·</span>
+            <span>
+              Simulation time{' '}
+              <strong>
+                {simEndS != null ? `${simEndS.toFixed(2)} s` : 'unknown'}
+              </strong>
+            </span>
+            <span>·</span>
+            <span>
+              {m.speed.global_max.toFixed(2)} {m.speed.unit} peak
+            </span>
+          </div>
+          <div className="viewer-header__frame">
+            Frame <strong>{frame + 1}</strong> / {m.frames.count}
+            {timeKnown && (
+              <>
+                {' · '}t ={' '}
+                <strong>{(m.frames.times[frame] ?? 0).toFixed(2)}</strong> s
+              </>
+            )}
           </div>
         </div>
         <div className="nav-spacer" />
+        <button
+          type="button"
+          className={`btn btn--sm${showOutputs ? ' btn--accent' : ''}`}
+          onClick={() => setShowOutputs((v) => !v)}
+          aria-expanded={showOutputs}
+          title="Output locations reported by the backend"
+        >
+          Outputs
+        </button>
         <a className="btn" href={exportUrl(jobId)} download={`${jobId}.zip`}>
           ⬇ Export ZIP
         </a>
       </div>
 
+      {showOutputs && (
+        <OutputPaths
+          paths={job?.paths}
+          note="Reported by the backend for this run (repo-relative unless outside the repository)."
+        />
+      )}
+
       <div className="viewer-tabs">
         {(
           [
-            ['viewer', '3D viewer'],
-            ['map', 'Map'],
+            ['map', '2D Map'],
+            ['satellite', 'Satellite'],
+            ['viewer', '3D Simulation'],
             ['analytics', 'Analytics'],
           ] as [Tab, string][]
         ).map(([id, label]) => (
@@ -248,6 +335,19 @@ export const ViewerPage: React.FC<ViewerPageProps> = ({ jobId, onBack }) => {
       </div>
 
       <div className="viewer-body">
+        {(tab === 'map' || tab === 'satellite') && (
+          <>
+            <ViewerMap
+              jobId={jobId}
+              manifest={m}
+              frame={frame}
+              scenario={scenarioName}
+              basemap={tab === 'satellite' ? 'satellite' : 'standard'}
+            />
+            {timeline}
+          </>
+        )}
+
         {tab === 'viewer' && (
           <>
             <div className="viewer-3d">
@@ -289,44 +389,7 @@ export const ViewerPage: React.FC<ViewerPageProps> = ({ jobId, onBack }) => {
                 drag orbit · wheel zoom · shift/right-drag pan
               </div>
             </div>
-            <TimelineControls
-              frame={frame}
-              frameCount={m.frames.count}
-              timeKnown={timeKnown}
-              times={m.frames.times}
-              playing={playing}
-              speed={speed}
-              layers={layers}
-              onSeek={seek}
-              onTogglePlay={togglePlay}
-              onSpeed={setSpeed}
-              onToggleLayer={(key) =>
-                setLayers((l) => ({ ...l, [key]: !l[key] }))
-              }
-              onResetCamera={() => setResetKey((k) => k + 1)}
-            />
-          </>
-        )}
-
-        {tab === 'map' && (
-          <>
-            <ViewerMap jobId={jobId} manifest={m} frame={frame} />
-            <TimelineControls
-              frame={frame}
-              frameCount={m.frames.count}
-              timeKnown={timeKnown}
-              times={m.frames.times}
-              playing={playing}
-              speed={speed}
-              layers={layers}
-              onSeek={seek}
-              onTogglePlay={togglePlay}
-              onSpeed={setSpeed}
-              onToggleLayer={(key) =>
-                setLayers((l) => ({ ...l, [key]: !l[key] }))
-              }
-              onResetCamera={() => setResetKey((k) => k + 1)}
-            />
+            {timeline}
           </>
         )}
 

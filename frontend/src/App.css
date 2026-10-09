@@ -465,6 +465,22 @@
   border-color: var(--color-border-accent);
 }
 
+.map-toolbar__label {
+  font-size: var(--font-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  padding: 0 6px 0 4px;
+}
+
+.map-toolbar__btn--active,
+.map-toolbar__btn[aria-pressed='true'] {
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
+  border-color: var(--color-border-accent);
+}
+
 .map-toolbar__status {
   display: flex;
   align-items: center;
@@ -488,6 +504,8 @@
    FLOOD MAP CONTAINER
    -------------------------------------------------------- */
 .flood-map-container {
+  /* Fill the sized map card (`.dash-map`) in both block and flex parents. */
+  height: 100%;
   flex: 1;
   position: relative;
   min-height: 0;                  /* let flex child shrink */
