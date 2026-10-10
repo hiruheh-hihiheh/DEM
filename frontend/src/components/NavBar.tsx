@@ -3,6 +3,7 @@ import React from 'react'
 export type View =
   | 'dashboard'
   | 'dams'
+  | 'onboard'
   | 'configure'
   | 'run'
   | 'history'
@@ -19,6 +20,7 @@ interface NavBarProps {
 const TABS: { id: View; label: string }[] = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'dams', label: 'Dams' },
+  { id: 'onboard', label: 'Add New Dam / Import DEM' },
   { id: 'configure', label: 'New simulation' },
   { id: 'run', label: 'Progress' },
   { id: 'history', label: 'History' },

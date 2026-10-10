@@ -14,6 +14,7 @@ import { HistoryPage } from './pages/HistoryPage'
 import { RunPage } from './pages/RunPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { ViewerPage } from './pages/ViewerPage'
+import { OnboardPage } from './pages/OnboardPage'
 
 import type { DamGeoJSON } from './types/dam'
 import type { JobSummary, ScenarioInfo } from './types/simulation'
@@ -161,6 +162,14 @@ function App() {
             onSelect={setSelectedDamId}
             scenarios={scenarios}
             onConfigure={(name) => openConfigure(name)}
+          />
+        )
+      case 'onboard':
+        return (
+          <OnboardPage
+            onNavigate={(v) => {
+              setView(v)
+            }}
           />
         )
       case 'configure':

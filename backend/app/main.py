@@ -4,6 +4,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.dams import router as dams_router
 from app.api.simulations import router as simulations_router
 from app.api.system import router as system_router
+try:
+    from app.api.sites import router as sites_router
+except Exception:
+    sites_router = None
 
 
 app = FastAPI(
@@ -27,6 +31,8 @@ app.add_middleware(
 app.include_router(dams_router)
 app.include_router(simulations_router)
 app.include_router(system_router)
+if sites_router:
+    app.include_router(sites_router)
 
 
 @app.get("/")
