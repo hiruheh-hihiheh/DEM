@@ -168,7 +168,86 @@ def generate_preview(site_slug: str, req: StudyAreaRequest):
 
 
 @router.post("/{site_slug}/prepare")
+def prepare_site(site_slug: str, req: PrepareRequest):
+    ensure_scripts_on_path()
+    meta_path = DATA_ROOT / site_slug / "metadata" / "upload.json"
+    if not meta_path.exists():
+        raise HTTPException(status_code=404, detail="Site not found")
+    meta = json.loads(meta_path.read_text())
+    dem_path = REPO_ROOT / meta["dem_path"]
+    site_dir = DATA_ROOT / site_slug
+    proc = site_dir / "processed"
+    sph = site_dir / "sph"
+    for d in (proc, sph):
+        d.mkdir(parents=True, exist_ok=True)
+    clipped = proc / f"{site_slug}_clip.tif"
+    sph_npz = sph / f"{site_slug}_sph_terrain.npz"
+    sph_stl = sph / f"{site_slug}_sph_terrain.stl"
 
+    case_name = req.case_name or "".join(w.capitalize() for w in re.split(r"[-_]+", site_slug)) or "Site"
+    safe = re.sub(r"[^A-Za-z0-9_]", "", case_name)
+    case_name = safe or "Site"
+
+    src_dir = EXAMPLES_ROOT / "HADR_TerrainChouldari"
+    dst_dir = EXAMPLES_ROOT / f"HADR_Terrain{case_name}"
+    if not dst_dir.exists():
+        shutil.copytree(src_dir, dst_dir)
+    gen_path = dst_dir / "generate_terrain_case.py"
+    cfg_path = dst_dir / "terrain_case_config.json"
+
+    cfg_data = json.loads(cfg_path.read_text())
+    cfg_data["case_name"] = f"HADR_Terrain{case_name}"
+    cfg_data["terrain_npz"] = str(sph_npz.relative_to(REPO_ROOT))
+    cfg_data["terrain_stl"] = str(sph_stl.relative_to(REPO_ROOT))
+    cfg_data["particle_spacing"] = float(req.particle_spacing)
+    cfg_data["simulation_time"] = float(req.simulation_time)
+    cfg_data["reservoir_water_depth"] = float(req.reservoir_water_depth)
+    cfg_data["fluid_bed_clearance"] = float(req.fluid_bed_clearance)
+    cfg_data["breach_width"] = float(req.breach_width)
+    cfg_data["breach_time"] = float(req.breach_time)
+    cfg_data["dam_crest_height"] = float(req.dam_crest_height)
+    cfg_data["dam_thickness"] = float(req.dam_thickness)
+    cfg_path.write_text(json.dumps(cfg_data, indent=2))
+
+    scenario = {
+        "name": site_slug,
+        "display_name": meta.get("site_name") or site_slug,
+        "description": f"Auto-generated site from uploaded DEM: {site_slug}",
+        "longitude": float(req.lon),
+        "latitude": float(req.lat),
+        "data_root": f"data/terrain/{site_slug}",
+        "runs_root": f"simulations/{site_slug}/runs",
+        "inputs": {"dem": str(clipped.relative_to(REPO_ROOT))},
+        "clip": {
+            "source_dem": str(dem_path.relative_to(REPO_ROOT)),
+            "width_km": float(req.width_km),
+            "height_km": float(req.height_km),
+        },
+        "terrain": {
+            "condition": {"max_fill_depth": 5.0, "preview": True},
+            "flow": {"preview": True},
+            "domain": {"corridor_width_km": 1.0, "preview": True},
+            "sph_terrain": {"target_resolution_m": 30.0, "scale": 0.02, "csv": True, "preview": True},
+            "mesh": {"max_edge_m": 1.5, "preview": True},
+        },
+        "case": {
+            "generator": str(gen_path.relative_to(REPO_ROOT)),
+            "config": str(cfg_path.relative_to(REPO_ROOT)),
+            "overrides": {},
+            "geometry_preview": True,
+        },
+        "simulation": {"enabled": True},
+        "postprocess": [
+            {
+                "name": "Particle outflow diagnostic",
+                "script": str((dst_dir / "analyze_particle_outflow.py").relative_to(REPO_ROOT)),
+                "args": ["--out-dir", "{sim_run_dir}"],
+            }
+        ],
+    }
+    scen_path = SCENARIOS_DIR / f"{site_slug}.json"
+    scen_path.write_text(json.dumps(scenario, indent=2))
+    return {"ok": True, "scenario": str(scen_path.relative_to(REPO_ROOT)), "case_dir": str(dst_dir.relative_to(REPO_ROOT))}
 @router.post("/{site_slug}/run-pipeline")
 def run_pipeline(site_slug: str, dry_run: bool = False):
     ensure_scripts_on_path()
@@ -176,18 +255,20 @@ def run_pipeline(site_slug: str, dry_run: bool = False):
     if not scen_path.exists():
         raise HTTPException(status_code=400, detail="Scenario not prepared")
     import subprocess
-    cmd = [sys.executable, str(REPO_ROOT / "scripts" / "run_scenario.py"), site_slug]
-    if dry_run:
-        cmd.append("--dry-run")
-    else:
-        # Run terrain + sph stages so dependencies are generated in order
-        cmd.append("--step")
-        cmd.append("terrain")
-        cmd.append("--step")
-        cmd.append("sph")
     try:
-        p = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace")
-        output = (p.stdout or "") + ("\n" + (p.stderr or "") if p.stderr else "")
-        return {"ok": p.returncode == 0, "returncode": p.returncode, "stdout": output[-16000:] if output else "", "stderr": ""}
+        if dry_run:
+            cmd = [sys.executable, str(REPO_ROOT / "scripts" / "run_scenario.py"), site_slug, "--dry-run"]
+            p = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace")
+            output = (p.stdout or "") + ("\n" + (p.stderr or "") if p.stderr else "")
+            return {"ok": p.returncode == 0, "returncode": p.returncode, "stdout": output[-16000:] if output else "", "stderr": ""}
+        p1 = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "run_scenario.py"), site_slug, "--step", "terrain"], cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace")
+        out = (p1.stdout or "")
+        if p1.stderr: out += "\n" + p1.stderr
+        if p1.returncode != 0:
+            return {"ok": False, "returncode": p1.returncode, "stdout": out[-16000:] if out else "", "stderr": ""}
+        p2 = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "run_scenario.py"), site_slug, "--step", "sph"], cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if p2.stdout: out += "\n" + p2.stdout
+        if p2.stderr: out += "\n" + p2.stderr
+        return {"ok": p2.returncode == 0, "returncode": p2.returncode, "stdout": out[-16000:] if out else "", "stderr": ""}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
