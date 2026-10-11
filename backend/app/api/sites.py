@@ -261,10 +261,14 @@ def run_pipeline(site_slug: str, dry_run: bool = False):
     if dry_run:
         cmd.append("--dry-run")
     else:
+        # Run terrain + sph stages so dependencies are generated in order
+        cmd.append("--step")
+        cmd.append("terrain")
         cmd.append("--step")
         cmd.append("sph")
     try:
         p = subprocess.run(cmd, cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace")
-        return {"ok": p.returncode == 0, "returncode": p.returncode, "stdout": p.stdout[-12000:] if p.stdout else "", "stderr": p.stderr[-8000:] if p.stderr else ""}
+        output = (p.stdout or "") + ("\n" + (p.stderr or "") if p.stderr else "")
+        return {"ok": p.returncode == 0, "returncode": p.returncode, "stdout": output[-16000:] if output else "", "stderr": ""}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

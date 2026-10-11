@@ -177,7 +177,7 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: Record<string, unknown>) =
           <button disabled={loading} onClick={handleRunPipeline}>Run Terrain+SPH Pipeline</button>
           {pipelineRes && (
             <div style={{ marginTop:12 }}>
-              <pre style={{ background:'#f9f9f9', padding:8, maxHeight:400, overflow:'auto' }}>{pipelineRes.stdout || pipelineRes.stderr}</pre>
+              <pre style={{ background:'#111827', color:'#f3f4f6', padding:16, maxHeight:600, overflow:'auto', fontFamily:'monospace', fontSize:'0.875rem', lineHeight:'1.5', whiteSpace:'pre-wrap' }}>{(pipelineRes as any).stdout || (pipelineRes as any).stderr || JSON.stringify(pipelineRes)}</pre>
               <button disabled={loading || !pipelineRes.ok} onClick={handleCreateJob}>Create Simulation Job</button>
             </div>
           )}
