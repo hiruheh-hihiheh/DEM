@@ -1,9 +1,9 @@
-import React, { useState } from 'react'
+﻿import React, { useState } from 'react'
 import { uploadDem, generatePreview, prepareSite, runPipeline, createJob } from '../services/api'
-import { MapToolBar } from '../components/MapToolBar'
-import maplibregl from 'maplibre-gl'
 
-export const OnboardPage: React.FC<{ onNavigate?: (v: any) => void }> = ({ onNavigate }) => {
+
+
+export const OnboardPage: React.FC<{ onNavigate?: (v: Record<string, unknown>) => void }> = ({ onNavigate }) => {
   const [step, setStep] = useState(1)
   const [file, setFile] = useState<File | null>(null)
   const [siteSlug, setSiteSlug] = useState('')
@@ -29,7 +29,7 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: any) => void }> = ({ onNav
       setSiteSlug(res.site_slug)
       setMsg('DEM uploaded and validated')
       setStep(2)
-    } catch (e: any) {
+    } catch (e: unknown) {
       setMsg(e?.response?.data?.detail || 'Upload failed')
     } finally {
       setLoading(false)
@@ -44,7 +44,7 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: any) => void }> = ({ onNav
       setPreview(res)
       setMsg('Preview generated')
       setStep(3)
-    } catch (e: any) {
+    } catch (e: unknown) {
       setMsg(e?.response?.data?.detail || 'Preview failed')
     } finally {
       setLoading(false)
@@ -72,7 +72,7 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: any) => void }> = ({ onNav
       setPrepareRes(res)
       setMsg('Scenario prepared')
       setStep(4)
-    } catch (e: any) {
+    } catch (e: unknown) {
       setMsg(e?.response?.data?.detail || 'Prepare failed')
     } finally {
       setLoading(false)
@@ -87,7 +87,7 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: any) => void }> = ({ onNav
       setPipelineRes(res)
       setMsg(res.ok ? 'Pipeline completed' : 'Pipeline failed')
       setStep(5)
-    } catch (e: any) {
+    } catch (e: unknown) {
       setMsg(e?.response?.data?.detail || 'Pipeline failed')
     } finally {
       setLoading(false)
@@ -98,10 +98,10 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: any) => void }> = ({ onNav
     setLoading(true)
     setMsg(null)
     try {
-      const res = await createJob({ scenario: siteSlug, params: { reservoir_level: 100, breach_width: 1.0, breach_time: 0.25, simulation_time: 6.0, particle_spacing: 0.1 } })
+      const res = await createJob({ scenario: siteSlug, parameters: { reservoir_level: 100, breach_width: 1.0, breach_time: 0.25, simulation_time: 6.0, particle_spacing: 0.1 } })
       setMsg('Job created: ' + res.job_id)
       if (onNavigate) onNavigate('run')
-    } catch (e: any) {
+    } catch (e: unknown) {
       setMsg(e?.response?.data?.detail || 'Create job failed')
     } finally {
       setLoading(false)
