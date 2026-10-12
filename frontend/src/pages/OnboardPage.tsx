@@ -1,63 +1,129 @@
 ﻿import React, { useState } from 'react'
 import { uploadDem, generatePreview, prepareSite, runPipeline, createJob } from '../services/api'
+import type { View } from '../components/NavBar'
 
+type SiteMeta = Record<string, unknown>
+type PrepareResult = { ok?: boolean; scenario?: string; case_dir?: string }
+type PipelineResult = { ok?: boolean; returncode?: number; stdout?: string; stderr?: string }
 
+const OUT_PANEL: React.CSSProperties = {
+  background: '#0b1220',
+  color: '#e5e7eb',
+  border: '1px solid #1f2937',
+  borderRadius: 8,
+  padding: 16,
+  maxHeight: 600,
+  overflow: 'auto',
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  fontSize: '0.875rem',
+  lineHeight: 1.5,
+  whiteSpace: 'pre-wrap',
+  marginTop: 12,
+}
 
-export const OnboardPage: React.FC<{ onNavigate?: (v: Record<string, unknown>) => void }> = ({ onNavigate }) => {
+const MSG_OK: React.CSSProperties = {
+  background: '#052e16',
+  color: '#bbf7d0',
+  border: '1px solid #14532d',
+  padding: 10,
+  borderRadius: 6,
+  marginBottom: 12,
+}
+
+const MSG_ERR: React.CSSProperties = {
+  background: '#450a0a',
+  color: '#fecaca',
+  border: '1px solid #7f1d1d',
+  padding: 10,
+  borderRadius: 6,
+  marginBottom: 12,
+}
+
+const MSG_INFO: React.CSSProperties = {
+  background: '#0b1220',
+  color: '#e5e7eb',
+  border: '1px solid #1f2937',
+  padding: 10,
+  borderRadius: 6,
+  marginBottom: 12,
+}
+
+/** Extract a human-readable message from an unknown thrown value. */
+const errorDetail = (e: unknown, fallback: string): string => {
+  if (typeof e === 'object' && e !== null) {
+    const resp = (e as { response?: { data?: { detail?: unknown } } }).response
+    const detail = resp?.data?.detail
+    if (typeof detail === 'string' && detail) return detail
+    const message = (e as { message?: unknown }).message
+    if (typeof message === 'string' && message) return message
+  }
+  if (typeof e === 'string' && e) return e
+  return fallback
+}
+
+export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => void }> = ({ onNavigate }) => {
   const [step, setStep] = useState(1)
   const [file, setFile] = useState<File | null>(null)
   const [siteSlug, setSiteSlug] = useState('')
   const [siteName, setSiteName] = useState('')
-  const [meta, setMeta] = useState<any>(null)
+  const [meta, setMeta] = useState<SiteMeta | null>(null)
   const [lon, setLon] = useState(76.4361)
   const [lat, setLat] = useState(31.4111)
   const [widthKm, setWidthKm] = useState(10)
   const [heightKm, setHeightKm] = useState(10)
-  const [preview, setPreview] = useState<any>(null)
-  const [prepareRes, setPrepareRes] = useState<any>(null)
-  const [pipelineRes, setPipelineRes] = useState<any>(null)
+  const [preview, setPreview] = useState<SiteMeta | null>(null)
+  const [prepareRes, setPrepareRes] = useState<PrepareResult | null>(null)
+  const [pipelineRes, setPipelineRes] = useState<PipelineResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [msgIsError, setMsgIsError] = useState(false)
+
+  const notify = (text: string, isError = false) => {
+    setMsg(text)
+    setMsgIsError(isError)
+  }
 
   const handleUpload = async () => {
-    if (!file) return
+    if (!file || loading) return
     setLoading(true)
     setMsg(null)
     try {
       const res = await uploadDem(file, siteSlug || undefined, siteName || undefined)
-      setMeta(res.meta)
-      setSiteSlug(res.site_slug)
-      setMsg('DEM uploaded and validated')
+      setMeta((res.meta as SiteMeta) ?? null)
+      setSiteSlug(String(res.site_slug ?? siteSlug))
+      notify('DEM uploaded and validated')
       setStep(2)
     } catch (e: unknown) {
-      setMsg(e?.response?.data?.detail || 'Upload failed')
+      notify(errorDetail(e, 'Upload failed'), true)
     } finally {
       setLoading(false)
     }
   }
 
   const handlePreview = async () => {
+    if (loading) return
     setLoading(true)
     setMsg(null)
     try {
-      const res = await generatePreview(siteSlug, { lon: parseFloat(lon as any), lat: parseFloat(lat as any), width_km: widthKm, height_km: heightKm })
-      setPreview(res)
-      setMsg('Preview generated')
+      const res = await generatePreview(siteSlug, { lon, lat, width_km: widthKm, height_km: heightKm })
+      setPreview((res as SiteMeta) ?? null)
+      notify('Preview generated')
       setStep(3)
     } catch (e: unknown) {
-      setMsg(e?.response?.data?.detail || 'Preview failed')
+      notify(errorDetail(e, 'Preview failed'), true)
     } finally {
       setLoading(false)
     }
   }
 
   const handlePrepare = async () => {
+    if (loading) return
     setLoading(true)
     setMsg(null)
     try {
       const res = await prepareSite(siteSlug, {
-        lon: parseFloat(lon as any),
-        lat: parseFloat(lat as any),
+        lon,
+        lat,
         width_km: widthKm,
         height_km: heightKm,
         reservoir_water_depth: 0.66,
@@ -69,52 +135,54 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: Record<string, unknown>) =
         dam_crest_height: 0.8,
         dam_thickness: 0.5,
       })
-      setPrepareRes(res)
-      setMsg('Scenario prepared')
+      setPrepareRes((res as PrepareResult) ?? null)
+      notify('Scenario prepared')
       setStep(4)
     } catch (e: unknown) {
-      setMsg(e?.response?.data?.detail || 'Prepare failed')
+      notify(errorDetail(e, 'Prepare failed'), true)
     } finally {
       setLoading(false)
     }
   }
 
   const handleRunPipeline = async () => {
+    if (loading) return
     setLoading(true)
     setMsg(null)
     try {
       const res = await runPipeline(siteSlug, false)
-      setPipelineRes(res)
-      setMsg(res.ok ? 'Pipeline completed' : 'Pipeline failed')
+      setPipelineRes((res as PipelineResult) ?? null)
+      notify(res.ok ? 'Pipeline completed' : 'Pipeline failed', !res.ok)
       setStep(5)
     } catch (e: unknown) {
-      setMsg(e?.response?.data?.detail || 'Pipeline failed')
+      notify(errorDetail(e, 'Pipeline failed'), true)
     } finally {
       setLoading(false)
     }
   }
 
   const handleCreateJob = async () => {
+    if (loading || !pipelineRes?.ok) return
     setLoading(true)
     setMsg(null)
     try {
-      const res = await createJob({ scenario: siteSlug, parameters: { reservoir_level: 100, breach_width: 1.0, breach_time: 0.25, simulation_time: 6.0, particle_spacing: 0.1 } })
-      setMsg('Job created: ' + res.job_id)
-      if (onNavigate) onNavigate('run')
+      const res = await createJob({ scenario: siteSlug, parameters: { reservoir_level: 100, breach_width: 1.0, breach_time: 0.25, simulation_time: 6.0, particle_spacing: 0.1, scenario_type: 'normal' } })
+      notify('Job created: ' + res.job_id)
+      if (onNavigate) onNavigate('run', res.job_id)
     } catch (e: unknown) {
-      setMsg(e?.response?.data?.detail || 'Create job failed')
+      notify(errorDetail(e, 'Create job failed'), true)
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div style={{ padding: 20, maxWidth: 900 }}>
+    <div style={{ padding: 20, maxWidth: 900, color: '#e5e7eb' }}>
       <h2>Add New Dam / Import DEM</h2>
       <div style={{ marginBottom: 12 }}>
         <strong>Step {step} of 5</strong> | {['Upload', 'Validate & Select Location', 'Study Area & Preview', 'Prepare', 'Validate/Pipeline'][step-1]}
       </div>
-      {msg && <div style={{ background: '#f0f0f0', padding: 8, marginBottom: 12 }}>{msg}</div>}
+      {msg && <div style={msgIsError ? MSG_ERR : MSG_OK}>{msg}</div>}
 
       {step===1 && (
         <div>
@@ -134,7 +202,7 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: Record<string, unknown>) =
       {step===2 && meta && (
         <div>
           <h3>DEM Metadata</h3>
-          <pre style={{ background:'#f9f9f9', padding:8, overflow:'auto' }}>{JSON.stringify(meta, null, 2)}</pre>
+          <pre style={OUT_PANEL}>{JSON.stringify(meta, null, 2)}</pre>
           <div style={{ marginBottom:8 }}>
             Dam location (lon, lat): <input value={lon} onChange={e=>setLon(parseFloat(e.target.value)||lon)} /> <input value={lat} onChange={e=>setLat(parseFloat(e.target.value)||lat)} />
           </div>
@@ -151,7 +219,7 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: Record<string, unknown>) =
           <button disabled={loading} onClick={handlePreview}>Generate Preview</button>
           {preview && (
             <div style={{ marginTop:12 }}>
-              <pre style={{ background:'#f9f9f9', padding:8 }}>{JSON.stringify(preview, null, 2)}</pre>
+              <pre style={OUT_PANEL}>{JSON.stringify(preview, null, 2)}</pre>
               <button disabled={loading} onClick={()=>setStep(4)}>Next</button>
             </div>
           )}
@@ -164,7 +232,7 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: Record<string, unknown>) =
           <button disabled={loading} onClick={handlePrepare}>Prepare</button>
           {prepareRes && (
             <div style={{ marginTop:12 }}>
-              <pre style={{ background:'#f9f9f9', padding:8 }}>{JSON.stringify(prepareRes, null, 2)}</pre>
+              <pre style={OUT_PANEL}>{JSON.stringify(prepareRes, null, 2)}</pre>
               <button disabled={loading} onClick={()=>setStep(5)}>Next</button>
             </div>
           )}
@@ -174,11 +242,23 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: Record<string, unknown>) =
       {step===5 && (
         <div>
           <h3>Validate & Run Pipeline</h3>
+          <p style={{ color: '#9ca3af', fontSize: '0.85rem' }}>
+            Runs terrain processing first, then SPH generation. SPH only starts if terrain succeeds.
+          </p>
           <button disabled={loading} onClick={handleRunPipeline}>Run Terrain+SPH Pipeline</button>
           {pipelineRes && (
             <div style={{ marginTop:12 }}>
-              <pre style={{ background:'#111827', color:'#f3f4f6', padding:16, maxHeight:600, overflow:'auto', fontFamily:'monospace', fontSize:'0.875rem', lineHeight:'1.5', whiteSpace:'pre-wrap' }}>{(pipelineRes as any).stdout || (pipelineRes as any).stderr || JSON.stringify(pipelineRes)}</pre>
+              <div style={pipelineRes.ok ? MSG_OK : MSG_ERR}>
+                {(pipelineRes.ok ? 'Pipeline succeeded' : 'Pipeline failed')}
+                {typeof pipelineRes.returncode === 'number' ? ` (exit code ${pipelineRes.returncode})` : ''}
+              </div>
+              <pre style={OUT_PANEL}>{pipelineRes.stdout || pipelineRes.stderr || JSON.stringify(pipelineRes, null, 2)}</pre>
               <button disabled={loading || !pipelineRes.ok} onClick={handleCreateJob}>Create Simulation Job</button>
+              {!pipelineRes.ok && (
+                <div style={{ ...MSG_INFO, marginTop: 12 }}>
+                  Fix the pipeline failure above before creating a simulation job.
+                </div>
+              )}
             </div>
           )}
         </div>

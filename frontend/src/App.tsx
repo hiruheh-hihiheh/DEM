@@ -167,7 +167,11 @@ function App() {
       case 'onboard':
         return (
           <OnboardPage
-            onNavigate={(v) => {
+            onNavigate={(v, jobId) => {
+              if (v === 'run' && jobId) {
+                jobStarted(jobId)
+                return
+              }
               setView(v)
             }}
           />
