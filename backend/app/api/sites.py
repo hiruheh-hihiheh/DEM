@@ -60,7 +60,9 @@ class PrepareRequest(BaseModel):
     dam_lon: Optional[float] = None
     dam_lat: Optional[float] = None
     # Flow axis through the dam ("x" or "y") and which side is upstream
-    # (+1 or -1).  None lets the generator infer them from the terrain.
+    # (+1 or -1).  None lets the generator infer the axis from the terrain.
+    # A sign is only meaningful relative to a fixed axis, so supplying
+    # ``dam_upstream_sign`` without an explicit ``dam_axis`` is rejected.
     dam_axis: Optional[str] = None
     dam_upstream_sign: Optional[int] = None
 
@@ -78,7 +80,9 @@ class PrepareRequest(BaseModel):
     particle_spacing: float = 0.1
     # End a reservoir segment at the waterline where its bed rises above the
     # common surface (per-segment clip) rather than dropping the whole segment.
-    reservoir_clip_to_wet_reach: bool = True
+    # Off by default: turning it on is an explicit opt-in, because it changes
+    # the reservoir geometry.
+    reservoir_clip_to_wet_reach: bool = False
     case_name: Optional[str] = None
 
 
@@ -310,6 +314,17 @@ def prepare_site(site_slug: str, req: PrepareRequest):
         dam_sign = int(dam_sign)
         if dam_sign not in (1, -1):
             raise HTTPException(status_code=400, detail="dam_upstream_sign must be +1 or -1")
+        if dam_axis is None:
+            # +1/-1 selects a direction ALONG a flow axis; with the axis left
+            # automatic the sign has no defined meaning and would be silently
+            # ignored by the generator.  Require an explicit axis instead.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "dam_upstream_sign requires an explicit dam_axis ('x' or 'y'); "
+                    "the upstream side is undefined while the flow axis is inferred"
+                ),
+            )
     # Default the dam anchor to the study-area center.
     dam_lon = float(req.dam_lon) if req.dam_lon is not None else float(req.lon)
     dam_lat = float(req.dam_lat) if req.dam_lat is not None else float(req.lat)

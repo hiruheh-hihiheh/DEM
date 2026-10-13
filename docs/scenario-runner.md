@@ -280,7 +280,7 @@ directory. `case.overrides` may set any of these keys (overrides win):
 | Key | Meaning |
 | --- | --- |
 | `force_upstream_axis` | `"x"` or `"y"` — flow axis through the dam; `null` infers it from the terrain. |
-| `force_upstream_sign` | `+1` or `-1` — which side of the dam is upstream; `null` infers it. |
+| `force_upstream_sign` | `+1` or `-1` — which side of the dam is upstream; `null` infers it. Requires an explicit `force_upstream_axis` (a sign is only meaningful along a fixed axis; a lone sign is rejected rather than silently ignored). |
 | `dam_crest_height` | Wall height above the local ground (simulation units, 1 sim = 1/`scale` m). |
 | `dam_thickness`, `dam_embedment` | Wall thickness and how far the wall base is buried below the footprint's lowest ground. |
 | `reservoir_water_depth`, `reservoir_freeboard` | Water column depth and freeboard below the crest. |

@@ -85,7 +85,7 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
   const [reservoirLengthM, setReservoirLengthM] = useState(150)
   const [bedClearanceM, setBedClearanceM] = useState(8)
   const [breachWidthM, setBreachWidthM] = useState(50)
-  const [clipToWetReach, setClipToWetReach] = useState(true)
+  const [clipToWetReach, setClipToWetReach] = useState(false)
   const [preview, setPreview] = useState<SiteMeta | null>(null)
   const [prepareRes, setPrepareRes] = useState<PrepareResult | null>(null)
   const [pipelineRes, setPipelineRes] = useState<PipelineResult | null>(null)
@@ -238,17 +238,35 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
           </div>
           <div style={{ marginBottom:8 }}>
             Flow axis:{' '}
-            <select value={damAxis} onChange={e=>setDamAxis(e.target.value as 'auto' | 'x' | 'y')}>
+            <select
+              value={damAxis}
+              onChange={e=>{
+                const next = e.target.value as 'auto' | 'x' | 'y'
+                setDamAxis(next)
+                // The upstream side is only meaningful relative to a fixed axis.
+                if (next === 'auto') setDamSign('auto')
+              }}
+            >
               <option value="auto">auto (infer from terrain)</option>
               <option value="x">x</option>
               <option value="y">y</option>
             </select>{' '}
             Upstream side:{' '}
-            <select value={damSign} onChange={e=>setDamSign(e.target.value as 'auto' | '1' | '-1')}>
+            <select
+              value={damSign}
+              disabled={damAxis === 'auto'}
+              title={damAxis === 'auto' ? 'Choose a flow axis first' : 'Which side of the dam is upstream'}
+              onChange={e=>setDamSign(e.target.value as 'auto' | '1' | '-1')}
+            >
               <option value="auto">auto (infer from terrain)</option>
               <option value="1">+1</option>
               <option value="-1">-1</option>
             </select>
+            {damAxis === 'auto' && (
+              <span style={{ color:'#9ca3af', fontSize:'0.85rem', marginLeft:8 }}>
+                Choose a flow axis to set the upstream side.
+              </span>
+            )}
           </div>
           <button disabled={loading} onClick={()=>setStep(3)}>Next</button>
         </div>
@@ -289,7 +307,8 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
           </div>
           <label style={{ display: 'block', marginBottom: 12 }}>
             <input type="checkbox" checked={clipToWetReach} onChange={e=>setClipToWetReach(e.target.checked)} />{' '}
-            End reservoir segments at the waterline where the bed rises above it
+            Opt in: end reservoir segments at the waterline where the bed rises above it
+            (off by default — changes the reservoir geometry)
           </label>
           <button disabled={loading} onClick={handlePrepare}>Prepare</button>
           {prepareRes && (

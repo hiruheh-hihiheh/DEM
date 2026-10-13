@@ -150,12 +150,14 @@ The generated case XML goes to `simulations/templates/`, solver output to
 **Site onboarding** (`/api/sites/*`): upload a DEM, preview, then
 `POST /api/sites/<slug>/prepare` writes the scenario + case config. Its body
 takes the study area (`lon`, `lat`, `width_km`, `height_km`), optional dam
-placement/orientation (`dam_lon`, `dam_lat`, `dam_axis` = `x`/`y`,
-`dam_upstream_sign` = `±1`; blank infers them) and the reservoir/dam geometry in
+placement/orientation (`dam_lon`, `dam_lat`, `dam_axis` = `x`/`y`;
+`dam_upstream_sign` = `±1` **requires** an explicit `dam_axis`, otherwise the
+request is rejected) and the reservoir/dam geometry in
 **metres** (`reservoir_water_depth_m`, `reservoir_freeboard_m`,
 `dam_crest_height_m`, `dam_thickness_m`, `dam_embedment_m`,
 `reservoir_length_m`, `fluid_bed_clearance_m`, `breach_width_m`), converted to
-simulation units with the terrain scale. See
+simulation units with the terrain scale. Reservoir clipping is opt-in via
+`reservoir_clip_to_wet_reach` (default `false`). See
 [`docs/scenario-runner.md`](docs/scenario-runner.md#case-geometry-keys-caseconfig--caseoverrides).
 
 ---
@@ -241,7 +243,8 @@ backend\venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
 They cover the dam span trim (inverted-abutment removal), breach centring on
-the wall as built, the `reservoir_clip_to_wet_reach` behaviour, the metre →
+the wall as built, the opt-in `reservoir_clip_to_wet_reach` behaviour, the
+upstream-sign/axis requirement, the metre →
 simulation-unit onboarding conversion, and the scenario dam-placement anchor.
 
 ---

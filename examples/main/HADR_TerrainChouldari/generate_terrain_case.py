@@ -1830,6 +1830,19 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
     force_axis = cfg.get("force_upstream_axis")
     force_sign = cfg.get("force_upstream_sign")
 
+    if force_axis is not None:
+        force_axis = str(force_axis).lower()
+        if force_axis not in {"x", "y"}:
+            raise ValueError("force_upstream_axis must be 'x' or 'y' (or null)")
+    if force_sign is not None and force_axis is None:
+        # The sign selects a direction along a flow axis (+1/-1).  Without an
+        # explicit axis it has no defined meaning, so refuse rather than
+        # silently discarding it (the caller must choose an axis first).
+        raise ValueError(
+            "force_upstream_sign requires force_upstream_axis to be 'x' or 'y': "
+            "the upstream direction is undefined while the flow axis is inferred"
+        )
+
     if force_axis in {"x", "y"}:
         flow_axis = str(force_axis)
         upstream_sign = -1.0 if force_sign is not None and float(force_sign) < 0 else 1.0

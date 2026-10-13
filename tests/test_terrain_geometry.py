@@ -16,12 +16,15 @@ They cover the geometry-validation failures this work addressed:
 * the breach must be centred on the wall as built (span midpoint), not on the
   asymmetric seed coordinate,
 * a reservoir segment whose bed rises above the waterline must be dropped
-  unless ``reservoir_clip_to_wet_reach`` is enabled, which ends the segment at
-  the waterline instead ("Reservoir has at least one fluid segment").
+  unless ``reservoir_clip_to_wet_reach`` is enabled (opt-in; ends the segment at
+  the waterline instead — "Reservoir has at least one fluid segment"),
+* an upstream sign requires an explicit flow axis, both in the onboarding API
+  and in the generator, so it can never be silently ignored.
 """
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import sys
@@ -186,7 +189,8 @@ class OnboardingUnitsTests(unittest.TestCase):
         # Dam placement defaults to the study-area centre.
         self.assertIsNone(req.dam_lon)
         self.assertIsNone(req.dam_lat)
-        self.assertTrue(req.reservoir_clip_to_wet_reach)
+        # Reservoir clipping is an explicit opt-in, off by default.
+        self.assertFalse(req.reservoir_clip_to_wet_reach)
 
     def test_default_metres_reproduce_shipped_bhakra_sim_values(self):
         req = self.sites.PrepareRequest(lon=76.4361, lat=31.4111)
@@ -200,39 +204,51 @@ class OnboardingUnitsTests(unittest.TestCase):
         self.assertAlmostEqual(self.sites._metres_to_sim(req.fluid_bed_clearance_m), 0.16)
         self.assertAlmostEqual(self.sites._metres_to_sim(req.breach_width_m), 1.00)
 
-    def test_prepare_site_writes_metre_conversion_and_dam_anchor(self):
+    def _build_case_env(self, root: Path):
+        """Minimal repo tree: a case template plus a previously-uploaded site."""
+        data_root = root / "data" / "terrain"
+        examples = root / "examples" / "main"
+        scenarios = root / "scenarios"
+        scenarios.mkdir(parents=True)
+        # Minimal case template (a copy of the Chouldari example is enough).
+        src = examples / "HADR_TerrainChouldari"
+        src.mkdir(parents=True)
+        (src / "generate_terrain_case.py").write_text("# placeholder\n", encoding="utf-8")
+        (src / "terrain_case_config.json").write_text("{}", encoding="utf-8")
+        site = data_root / "_test_site"
+        (site / "metadata").mkdir(parents=True)
+        (site / "metadata" / "upload.json").write_text(
+            json.dumps(
+                {
+                    "dem_path": "data/terrain/_test_site/input/dem.tif",
+                    "site_name": "Test Site",
+                }
+            ),
+            encoding="utf-8",
+        )
+        return data_root, examples, scenarios
+
+    @contextlib.contextmanager
+    def _patched_roots(self, root: Path, data_root: Path, examples: Path, scenarios: Path):
         sites = self.sites
         names = ("REPO_ROOT", "DATA_ROOT", "EXAMPLES_ROOT", "SCENARIOS_DIR")
         original = {name: getattr(sites, name) for name in names}
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp)
-            data_root = repo / "data" / "terrain"
-            examples = repo / "examples" / "main"
-            scenarios = repo / "scenarios"
-            scenarios.mkdir(parents=True)
-            # Minimal case template (a copy of the Chouldari example is enough).
-            src = examples / "HADR_TerrainChouldari"
-            src.mkdir(parents=True)
-            (src / "generate_terrain_case.py").write_text("# placeholder\n", encoding="utf-8")
-            (src / "terrain_case_config.json").write_text("{}", encoding="utf-8")
-            # A previously-uploaded site.
-            site = data_root / "_test_site"
-            (site / "metadata").mkdir(parents=True)
-            (site / "metadata" / "upload.json").write_text(
-                json.dumps(
-                    {
-                        "dem_path": "data/terrain/_test_site/input/dem.tif",
-                        "site_name": "Test Site",
-                    }
-                ),
-                encoding="utf-8",
-            )
+        sites.REPO_ROOT = root
+        sites.DATA_ROOT = data_root
+        sites.EXAMPLES_ROOT = examples
+        sites.SCENARIOS_DIR = scenarios
+        try:
+            yield
+        finally:
+            for name, value in original.items():
+                setattr(sites, name, value)
 
-            sites.REPO_ROOT = repo
-            sites.DATA_ROOT = data_root
-            sites.EXAMPLES_ROOT = examples
-            sites.SCENARIOS_DIR = scenarios
-            try:
+    def test_prepare_site_writes_metre_conversion_and_dam_anchor(self):
+        sites = self.sites
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root, examples, scenarios = self._build_case_env(root)
+            with self._patched_roots(root, data_root, examples, scenarios):
                 result = sites.prepare_site(
                     "_test_site",
                     sites.PrepareRequest(
@@ -247,9 +263,6 @@ class OnboardingUnitsTests(unittest.TestCase):
                         breach_width_m=50.0,
                     ),
                 )
-            finally:
-                for name, value in original.items():
-                    setattr(sites, name, value)
 
             self.assertTrue(result["ok"])
             scenario = json.loads((scenarios / "_test_site.json").read_text(encoding="utf-8"))
@@ -264,9 +277,58 @@ class OnboardingUnitsTests(unittest.TestCase):
             self.assertAlmostEqual(cfg["breach_width"], 1.00)
             self.assertEqual(cfg["force_upstream_axis"], "y")
             self.assertEqual(cfg["force_upstream_sign"], -1)
-            self.assertTrue(cfg["reservoir_clip_to_wet_reach"])
+            # Reservoir clipping stays opt-in: a default request writes False.
+            self.assertFalse(cfg["reservoir_clip_to_wet_reach"])
             self.assertEqual(cfg["case_name"], "HADR_TerrainTestSite")
             self.assertEqual(cfg["definition_name"], "HADR_TerrainTestSite_Def.xml")
+
+    def test_prepare_site_opt_in_reservoir_clip(self):
+        sites = self.sites
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root, examples, scenarios = self._build_case_env(root)
+            with self._patched_roots(root, data_root, examples, scenarios):
+                sites.prepare_site(
+                    "_test_site",
+                    sites.PrepareRequest(lon=76.0, lat=31.0, reservoir_clip_to_wet_reach=True),
+                )
+            cfg = json.loads(
+                (examples / "HADR_TerrainTestSite" / "terrain_case_config.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertTrue(cfg["reservoir_clip_to_wet_reach"])
+
+    def test_prepare_site_rejects_sign_without_axis(self):
+        """An upstream sign without an explicit axis is rejected, so it can
+        never be silently ignored by the generator."""
+        sites = self.sites
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root, examples, scenarios = self._build_case_env(root)
+            with self._patched_roots(root, data_root, examples, scenarios):
+                with self.assertRaises(sites.HTTPException) as ctx:
+                    sites.prepare_site(
+                        "_test_site",
+                        sites.PrepareRequest(lon=76.0, lat=31.0, dam_upstream_sign=-1),
+                    )
+            self.assertEqual(ctx.exception.status_code, 400)
+            self.assertIn("dam_axis", str(ctx.exception.detail))
+            # The rejected request never wrote a case directory.
+            self.assertFalse((examples / "HADR_TerrainTestSite").exists())
+
+    def test_prepare_site_rejects_invalid_axis(self):
+        sites = self.sites
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root, examples, scenarios = self._build_case_env(root)
+            with self._patched_roots(root, data_root, examples, scenarios):
+                with self.assertRaises(sites.HTTPException) as ctx:
+                    sites.prepare_site(
+                        "_test_site",
+                        sites.PrepareRequest(lon=76.0, lat=31.0, dam_axis="z"),
+                    )
+            self.assertEqual(ctx.exception.status_code, 400)
 
 
 # ---------------------------------------------------------------------------
@@ -431,6 +493,57 @@ class GeneratorGeometryTests(unittest.TestCase):
         midpoint = 0.5 * (span_start + span_end)
         self.assertAlmostEqual(summary["breach"]["center"], midpoint, places=6)
         self.assertNotAlmostEqual(summary["breach"]["center"], 11.0, places=3)
+
+    def test_force_sign_without_axis_is_rejected(self):
+        """A forced upstream sign with an automatic axis fails loudly instead
+        of being silently discarded."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            npz, stl = _make_synthetic_terrain(tmp_dir)
+            config_path = _write_config(
+                tmp_dir,
+                npz=npz,
+                stl=stl,
+                base={
+                    **SYNTH_BASE,
+                    "force_upstream_axis": None,
+                    "force_upstream_sign": -1,
+                },
+            )
+            with self.assertRaises(ValueError):
+                _run_generator(self.gen, config_path, tmp_dir / "case")
+
+    def test_invalid_force_axis_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            npz, stl = _make_synthetic_terrain(tmp_dir)
+            config_path = _write_config(
+                tmp_dir,
+                npz=npz,
+                stl=stl,
+                base={**SYNTH_BASE, "force_upstream_axis": "z"},
+            )
+            with self.assertRaises(ValueError):
+                _run_generator(self.gen, config_path, tmp_dir / "case")
+
+    def test_forced_axis_and_sign_are_honored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            npz, stl = _make_synthetic_terrain(tmp_dir)
+            config_path = _write_config(
+                tmp_dir,
+                npz=npz,
+                stl=stl,
+                base={
+                    **SYNTH_BASE,
+                    "force_upstream_axis": "x",
+                    "force_upstream_sign": -1,
+                },
+            )
+            summary = _run_generator(self.gen, config_path, tmp_dir / "case")
+        self.assertEqual(summary["upstream"]["flow_axis"], "x")
+        self.assertEqual(summary["upstream"]["method"], "forced-by-config")
+        self.assertLess(summary["upstream"]["upstream_sign"], 0)
 
     def test_reservoir_clip_recovers_submerged_reach(self):
         """Bed rising above the waterline: clip off drops the segment (and
