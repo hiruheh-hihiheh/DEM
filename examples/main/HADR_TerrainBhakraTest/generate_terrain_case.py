@@ -715,6 +715,7 @@ def _make_reservoir_boxes(
     z: np.ndarray,
     default_ground_z: float,
     water_surface_z: float | None = None,
+    clip_to_wet_reach: bool = False,
 ) -> tuple[list[FluidBox], float | None]:
     """
     Build terrain-following reservoir segments with ONE common horizontal
@@ -727,6 +728,12 @@ def _make_reservoir_boxes(
     below the dam crest); it is only derived from the beds when absent.
     Segments whose bed sits at/above the water line are dropped (they would
     have no meaningful water column).
+
+    With ``clip_to_wet_reach`` set, such a segment is instead clipped to the
+    longest reach next to the dam whose bed stays below the water surface, so
+    a rising impoundment bed ends the reservoir at the waterline rather than
+    voiding the whole segment.  Default off: the historical construction is
+    kept for existing configurations.
     """
     if span_end <= span_start:
         return [], None
@@ -791,22 +798,85 @@ def _make_reservoir_boxes(
         common_water_surface_z = min(bed_elevations) + water_depth
 
     # Second pass: create boxes.
+    #
+    # A rectangular fluid box may only cover terrain that is below the water
+    # surface, so it can never span a bed that rises above the water line.
+    # The default drops such a segment outright.  With clip_to_wet_reach the
+    # segment is instead clipped to the longest reach (measured from the dam
+    # face) whose bed stays below the common water surface: the reservoir then
+    # ends at the waterline and the dry abutment is left as terrain.  A
+    # segment that is already above the water line at the shortest reach is
+    # genuinely dry and dropped either way.
+    wet_limit = common_water_surface_z - fluid_bed_clearance - particle_spacing
+    min_reach = max(particle_spacing, 1e-3)
+
+    def _bed_max_over(s0: float, s1: float, reach: float) -> float | None:
+        if flow_axis == "x":
+            y0, y1 = s0, s1
+            if upstream_sign > 0:
+                x0 = fluid_x0
+                x1 = fluid_x0 + reach
+            else:
+                x1 = fluid_x1
+                x0 = fluid_x1 - reach
+        else:
+            x0, x1 = s0, s1
+            if upstream_sign > 0:
+                y0 = fluid_y0
+                y1 = fluid_y0 + reach
+            else:
+                y1 = fluid_y1
+                y0 = fluid_y1 - reach
+        stats = _cell_stats(x, y, z, x0, x1, y0, y1)
+        return stats["max"] if stats is not None else None
+
     boxes: list[FluidBox] = []
 
     for i, (s0, s1) in enumerate(intervals):
-        if flow_axis == "x":
-            x0, x1 = fluid_x0, fluid_x1
-            y0, y1 = s0, s1
-        else:
-            x0, x1 = s0, s1
-            y0, y1 = fluid_y0, fluid_y1
+        z1 = common_water_surface_z
 
         bed_z = bed_elevations[i]
         terrain_max = terrain_maxes[i]
+        reach = reservoir_length
+
+        if clip_to_wet_reach and bed_z > wet_limit + 1e-9:
+            first = _bed_max_over(s0, s1, min_reach)
+            if first is None or first > wet_limit + 1e-9:
+                continue
+            # The bed rises with reach (max over a growing footprint), so the
+            # admissible reach forms one interval: bisect for its upper end.
+            lo, hi = min_reach, reservoir_length
+            for _ in range(24):
+                mid = 0.5 * (lo + hi)
+                if mid <= lo + 1e-9 or mid >= hi - 1e-9:
+                    break
+                bed_mid = _bed_max_over(s0, s1, mid)
+                if bed_mid is not None and bed_mid <= wet_limit + 1e-9:
+                    lo = mid
+                else:
+                    hi = mid
+            reach = lo
+            bed_z = _bed_max_over(s0, s1, reach)
+            if bed_z is None:
+                continue
+            terrain_max = bed_z
+
+        if flow_axis == "x":
+            x0, x1 = fluid_x0, fluid_x1
+            y0, y1 = s0, s1
+            if upstream_sign > 0:
+                x1 = fluid_x0 + reach
+            else:
+                x0 = fluid_x1 - reach
+        else:
+            x0, x1 = s0, s1
+            y0, y1 = fluid_y0, fluid_y1
+            if upstream_sign > 0:
+                y1 = fluid_y0 + reach
+            else:
+                y0 = fluid_y1 - reach
 
         z0 = bed_z + fluid_bed_clearance
-        z1 = common_water_surface_z
-
         actual_depth = z1 - z0
 
         # Segments whose bed sits at/above the water line would only get a
@@ -1841,16 +1911,8 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
 
     if flow_axis == "x":
         dam_axis_center = dam_y
-        endpoints = [
-            [dam_x, dam_y + span_rel_min],
-            [dam_x, dam_y + span_rel_max],
-        ]
     else:
         dam_axis_center = dam_x
-        endpoints = [
-            [dam_x + span_rel_min, dam_y],
-            [dam_x + span_rel_max, dam_y],
-        ]
 
     span_start = dam_axis_center + span_rel_min
     span_end = dam_axis_center + span_rel_max
@@ -1879,103 +1941,125 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
             "breach_time + breach_lift_duration must be <= simulation_time"
         )
 
-    span_width = span_end - span_start
     minimum_side_width = max(0.25, 2.0 * particle_spacing)
-    maximum_breach_width = max(0.10, span_width - 2.0 * minimum_side_width)
 
-    breach_enabled = breach_enabled_cfg
-    breach_width = min(max(breach_width_cfg, 0.0), maximum_breach_width)
+    def _build_walls(
+        span_start: float, span_end: float
+    ) -> tuple[list[WallBox], WallBox | None, float, float, float, float, bool]:
+        """Build the fixed/moving wall boxes for a candidate span.
 
-    if breach_enabled and breach_width <= 1e-3:
-        breach_enabled = False
+        The gate is centred on the wall as built (the span midpoint), NOT on
+        the seed coordinate: the valley-fit / lateral-containment span can be
+        asymmetric about the seed, so the seed lies off the wall centre.  The
+        span-trim fixpoint and the final geometry both call this so they use
+        an identical segmentation.
+        """
+        span_width = span_end - span_start
+        maximum_breach_width = max(0.10, span_width - 2.0 * minimum_side_width)
+        bw = min(max(breach_width_cfg, 0.0), maximum_breach_width)
+        enabled = breach_enabled_cfg and bw > 1e-3
+        center = 0.5 * (span_start + span_end)
+        if enabled:
+            b_start = center - bw / 2.0
+            b_end = center + bw / 2.0
+        else:
+            bw = 0.0
+            b_start = center
+            b_end = center
 
-    breach_center = dam_axis_center
-    breach_start = breach_center - breach_width / 2.0
-    breach_end = breach_center + breach_width / 2.0
-
-    fixed_left_width = breach_start - span_start
-    fixed_right_width = span_end - breach_end
-
-    if not breach_enabled:
-        breach_width = 0.0
-        breach_start = breach_center
-        breach_end = breach_center
-        fixed_left_width = span_width / 2.0
-        fixed_right_width = span_width / 2.0
-
-    fixed_boxes: list[WallBox] = []
-
-    if breach_enabled:
-        if fixed_left_width > 1e-3:
-            fixed_boxes.extend(
-                _make_wall_boxes(
-                    flow_axis=flow_axis,
-                    dam_x=dam_x,
-                    dam_y=dam_y,
-                    thickness=dam_thickness,
-                    interval_start=span_start,
-                    interval_end=breach_start,
-                    segment_length=dam_segment_length,
-                    x=x, y=y, z=z,
-                    embedment=dam_embedment,
-                    common_crest_z=dam_crest_z,
-                    default_ground_z=dam_center_z,
-                    kind="fixed",
-                )
-            )
-
-        if fixed_right_width > 1e-3:
-            fixed_boxes.extend(
-                _make_wall_boxes(
-                    flow_axis=flow_axis,
-                    dam_x=dam_x,
-                    dam_y=dam_y,
-                    thickness=dam_thickness,
-                    interval_start=breach_end,
-                    interval_end=span_end,
-                    segment_length=dam_segment_length,
-                    x=x, y=y, z=z,
-                    embedment=dam_embedment,
-                    common_crest_z=dam_crest_z,
-                    default_ground_z=dam_center_z,
-                    kind="fixed",
-                )
-            )
-
-        breach_boxes = _make_wall_boxes(
-            flow_axis=flow_axis,
-            dam_x=dam_x,
-            dam_y=dam_y,
-            thickness=dam_thickness,
-            interval_start=breach_start,
-            interval_end=breach_end,
-            segment_length=max(breach_width, 0.1),
-            x=x, y=y, z=z,
-            embedment=dam_embedment,
-            common_crest_z=dam_crest_z,
-            default_ground_z=dam_center_z,
-            kind="breach",
-        )
-
-        breach_box = breach_boxes[0] if breach_boxes else None
-    else:
-        fixed_boxes.extend(
-            _make_wall_boxes(
+        def _wall(i_start: float, i_end: float, kind: str) -> list[WallBox]:
+            return _make_wall_boxes(
                 flow_axis=flow_axis,
                 dam_x=dam_x,
                 dam_y=dam_y,
                 thickness=dam_thickness,
-                interval_start=span_start,
-                interval_end=span_end,
+                interval_start=i_start,
+                interval_end=i_end,
                 segment_length=dam_segment_length,
                 x=x, y=y, z=z,
                 embedment=dam_embedment,
                 common_crest_z=dam_crest_z,
                 default_ground_z=dam_center_z,
-                kind="fixed",
+                kind=kind,
             )
-        )
-        breach_box = None
+
+        boxes: list[WallBox] = []
+        bbox: WallBox | None = None
+
+        if enabled:
+            if b_start - span_start > 1e-3:
+                boxes.extend(_wall(span_start, b_start, "fixed"))
+            if span_end - b_end > 1e-3:
+                boxes.extend(_wall(b_end, span_end, "fixed"))
+            breach_boxes = _make_wall_boxes(
+                flow_axis=flow_axis,
+                dam_x=dam_x,
+                dam_y=dam_y,
+                thickness=dam_thickness,
+                interval_start=b_start,
+                interval_end=b_end,
+                segment_length=max(bw, 0.1),
+                x=x, y=y, z=z,
+                embedment=dam_embedment,
+                common_crest_z=dam_crest_z,
+                default_ground_z=dam_center_z,
+                kind="breach",
+            )
+            bbox = breach_boxes[0] if breach_boxes else None
+        else:
+            boxes.extend(_wall(span_start, span_end, "fixed"))
+
+        return boxes, bbox, center, b_start, b_end, bw, enabled
+
+    (
+        fixed_boxes,
+        breach_box,
+        breach_center,
+        breach_start,
+        breach_end,
+        breach_width,
+        breach_enabled,
+    ) = _build_walls(span_start, span_end)
+
+    # Trim the span inward while an outermost wall segment is inverted (its
+    # footprint ground is already at/above the common crest).  Such ground is
+    # natural abutment, not dam, so the wall must not extend onto it.  This
+    # uses the REAL end-segment footprint via _build_walls and keeps the crest,
+    # embedment, clearance and containment checks fully active instead of
+    # raising the crest or widening the dam to hide the mismatch.
+    trim_step = max(0.5 * dam_segment_length, 2.0 * particle_spacing)
+    for _ in range(400):
+        if span_end - span_start <= min_span_cfg + trim_step:
+            break
+        if fixed_boxes and fixed_boxes[0].z0 >= fixed_boxes[0].z1 - 1e-9:
+            span_start += trim_step
+        elif fixed_boxes and fixed_boxes[-1].z0 >= fixed_boxes[-1].z1 - 1e-9:
+            span_end -= trim_step
+        else:
+            break
+        (
+            fixed_boxes,
+            breach_box,
+            breach_center,
+            breach_start,
+            breach_end,
+            breach_width,
+            breach_enabled,
+        ) = _build_walls(span_start, span_end)
+
+    if flow_axis == "x":
+        endpoints = [
+            [dam_x, span_start],
+            [dam_x, span_end],
+        ]
+    else:
+        endpoints = [
+            [span_start, dam_y],
+            [span_end, dam_y],
+        ]
+
+    fixed_left_width = breach_start - span_start
+    fixed_right_width = span_end - breach_end
 
     gate_initial_z = None
     gate_final_z = None
@@ -2038,6 +2122,7 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
         x=x, y=y, z=z,
         default_ground_z=dam_center_z,
         water_surface_z=target_water_surface_z,
+        clip_to_wet_reach=bool(cfg.get("reservoir_clip_to_wet_reach", False)),
     )
 
     reservoir = ReservoirGeometry(boxes=reservoir_boxes)
@@ -2319,16 +2404,28 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
             "z1": breach_box.z1 + actual_gate_lift,
         }
 
+    limitations = [
+        "Terrain source is Copernicus GLO-30 DSM data.",
+        "Terrain coordinates are numerically scaled prototype coordinates.",
+        "The dam/reservoir geometry is terrain-anchored but still experimental.",
+        "This is not a validated physical flood model.",
+        "Hydrological calibration is still required.",
+    ]
+    if validation.get("status") == "fail" and validation.get("errors"):
+        limitations.append(
+            "Validation failed against the supplied terrain. A Copernicus "
+            "GLO-30 DSM records the top surface it images, which over a "
+            "reservoir is the WATER SURFACE, not the bed. Dam/reservoir "
+            "containment checks cannot be satisfied on such a surface: a "
+            "bare-earth DEM/DTM or reservoir bathymetry is required for a "
+            "valid geometry. Do NOT run or report a flood result for this "
+            "case until that data is supplied."
+        )
+
     summary = {
         "case_name": case_name,
         "status": "experimental_terrain_breach_redesign",
-        "limitations": [
-            "Terrain source is Copernicus GLO-30 DSM data.",
-            "Terrain coordinates are numerically scaled prototype coordinates.",
-            "The dam/reservoir geometry is terrain-anchored but still experimental.",
-            "This is not a validated physical flood model.",
-            "Hydrological calibration is still required.",
-        ],
+        "limitations": limitations,
         "inputs": {
             "terrain_npz": str(terrain["npz_path"]),
             "terrain_stl_source": str(stl_source),

@@ -70,6 +70,7 @@ CASE_OVERRIDE_RANGES: dict[str, tuple[float, float]] = {
 
 _ALLOWED_TOP_LEVEL = {
     "name", "display_name", "description", "dam_id", "longitude", "latitude",
+    "dam_longitude", "dam_latitude",
     "data_root", "runs_root", "inputs", "clip", "terrain", "case",
     "simulation", "postprocess", "dualsphysics_root",
 }
@@ -145,6 +146,11 @@ class Scenario:
     river: str | None
     longitude: float
     latitude: float
+    # Optional explicit dam placement; defaults to (longitude, latitude).
+    # The study area is clipped about (longitude, latitude) while the dam
+    # anchor drives conditioning / flow / domain / SPH terrain.
+    dam_longitude: float
+    dam_latitude: float
 
     data_root: Path
     runs_root: Path
@@ -284,6 +290,23 @@ def load_scenario(name: str) -> Scenario:
             problems.append(str(exc))
     if longitude is None or latitude is None:
         expect(False, "either 'dam_id' or 'longitude'+'latitude' is required")
+
+    # --- optional explicit dam placement --------------------------------
+    # Falls back to the study-area center.  Anchors conditioning / flow /
+    # domain / SPH terrain while the study area is clipped about
+    # (longitude, latitude).
+    dam_longitude = data.get("dam_longitude")
+    dam_latitude = data.get("dam_latitude")
+    if dam_longitude is not None or dam_latitude is not None:
+        expect(_is_number(dam_longitude) and -180.0 <= float(dam_longitude or 0) <= 180.0,
+               "'dam_longitude' must be a number in [-180, 180]")
+        expect(_is_number(dam_latitude) and -90.0 <= float(dam_latitude or 0) <= 90.0,
+               "'dam_latitude' must be a number in [-90, 90]")
+        if not (_is_number(dam_longitude) and _is_number(dam_latitude)):
+            dam_longitude = dam_latitude = None
+    if dam_longitude is None or dam_latitude is None:
+        dam_longitude = longitude
+        dam_latitude = latitude
 
     # --- roots & inputs --------------------------------------------------
     data_root = data.get("data_root")
@@ -548,6 +571,7 @@ def load_scenario(name: str) -> Scenario:
 
     assert isinstance(scenario_name, str)
     assert longitude is not None and latitude is not None
+    assert dam_longitude is not None and dam_latitude is not None
 
     return Scenario(
         name=scenario_name,
@@ -558,6 +582,8 @@ def load_scenario(name: str) -> Scenario:
         river=river,
         longitude=float(longitude),
         latitude=float(latitude),
+        dam_longitude=float(dam_longitude),
+        dam_latitude=float(dam_latitude),
         data_root=data_root_path,
         runs_root=runs_root_path,
         inputs=inputs,

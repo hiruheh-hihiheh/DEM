@@ -8,10 +8,10 @@ import shutil
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DATA_ROOT = REPO_ROOT / "data" / "terrain"
@@ -19,6 +19,15 @@ EXAMPLES_ROOT = REPO_ROOT / "examples" / "main"
 SCENARIOS_DIR = REPO_ROOT / "scenarios"
 
 router = APIRouter(prefix="/api/sites", tags=["Sites"])
+
+
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+# Terrain simulation scale written to every scenario's
+# terrain.sph_terrain.scale.  1 simulation unit = 1 / TERRAIN_SCALE metres
+# (0.02 => 1 sim = 50 m), so metre-based onboarding inputs are converted with
+# this factor and mean the same physical size at every site.
+TERRAIN_SCALE = 0.02
 
 
 class StudyAreaRequest(BaseModel):
@@ -30,22 +39,47 @@ class StudyAreaRequest(BaseModel):
 
 
 class PrepareRequest(BaseModel):
+    """Onboarding geometry/placement inputs.
+
+    Coordinate units: degrees (WGS84) for lon/lat and dam placement.
+
+    All reservoir/dam dimensions are in METRES; they are converted to the
+    simulation unit system with ``TERRAIN_SCALE`` when the case config is
+    written (see ``_metres_to_sim``).  ``particle_spacing`` stays in
+    simulation units because it must be a fixed lattice step.
+    """
+
     lon: float
     lat: float
     width_km: float = 10.0
     height_km: float = 10.0
-    reservoir_water_depth: float = 0.66
-    breach_width: float = 1.0
+
+    # --- Dam placement & orientation (optional) -------------------------
+    # The study area is still clipped about (lon, lat); the dam anchor drives
+    # conditioning / flow / domain / SPH terrain.  Defaults to (lon, lat).
+    dam_lon: Optional[float] = None
+    dam_lat: Optional[float] = None
+    # Flow axis through the dam ("x" or "y") and which side is upstream
+    # (+1 or -1).  None lets the generator infer them from the terrain.
+    dam_axis: Optional[str] = None
+    dam_upstream_sign: Optional[int] = None
+
+    # --- Reservoir & dam geometry, in METRES ----------------------------
+    reservoir_water_depth_m: float = 33.0
+    reservoir_freeboard_m: float = 2.5
+    dam_crest_height_m: float = 40.0
+    dam_thickness_m: float = 25.0
+    dam_embedment_m: float = 5.0
+    reservoir_length_m: float = 150.0
+    fluid_bed_clearance_m: float = 8.0
+    breach_width_m: float = 50.0
     breach_time: float = 0.25
     simulation_time: float = 6.0
     particle_spacing: float = 0.1
-    fluid_bed_clearance: float = 0.16
-    dam_crest_height: float = 0.8
-    dam_thickness: float = 0.5
+    # End a reservoir segment at the waterline where its bed rises above the
+    # common surface (per-segment clip) rather than dropping the whole segment.
+    reservoir_clip_to_wet_reach: bool = True
     case_name: Optional[str] = None
-
-
-SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 
 def ensure_scripts_on_path() -> None:
@@ -62,6 +96,11 @@ def _slugify(text: str) -> str:
     text = re.sub(r"[^a-z0-9_-]+", "_", text)
     text = re.sub(r"[_-]{2,}", "_", text).strip("_")
     return text or f"site_{uuid.uuid4().hex[:6]}"
+
+
+def _metres_to_sim(value: float) -> float:
+    """Convert a length in metres to terrain simulation units."""
+    return float(value) * TERRAIN_SCALE
 
 
 @router.post("/upload-dem")
@@ -260,6 +299,21 @@ def prepare_site(site_slug: str, req: PrepareRequest):
     case_name = safe or "Site"
     case_name_full = f"HADR_Terrain{case_name}"
 
+    # --- Dam placement & orientation controls ---------------------------
+    dam_axis = req.dam_axis
+    if dam_axis is not None:
+        dam_axis = str(dam_axis).lower()
+        if dam_axis not in ("x", "y"):
+            raise HTTPException(status_code=400, detail="dam_axis must be 'x' or 'y'")
+    dam_sign = req.dam_upstream_sign
+    if dam_sign is not None:
+        dam_sign = int(dam_sign)
+        if dam_sign not in (1, -1):
+            raise HTTPException(status_code=400, detail="dam_upstream_sign must be +1 or -1")
+    # Default the dam anchor to the study-area center.
+    dam_lon = float(req.dam_lon) if req.dam_lon is not None else float(req.lon)
+    dam_lat = float(req.dam_lat) if req.dam_lat is not None else float(req.lat)
+
     src_dir = EXAMPLES_ROOT / "HADR_TerrainChouldari"
     dst_dir = EXAMPLES_ROOT / case_name_full
     if dst_dir.resolve() == src_dir.resolve():
@@ -283,14 +337,22 @@ def prepare_site(site_slug: str, req: PrepareRequest):
     cfg_data["summary_name"] = "terrain_case_summary.json"
     cfg_data["terrain_npz"] = str(sph_npz.relative_to(REPO_ROOT))
     cfg_data["terrain_stl"] = str(sph_stl.relative_to(REPO_ROOT))
+    # Geometry in metres -> simulation units (constant physical meaning).
     cfg_data["particle_spacing"] = float(req.particle_spacing)
     cfg_data["simulation_time"] = float(req.simulation_time)
-    cfg_data["reservoir_water_depth"] = float(req.reservoir_water_depth)
-    cfg_data["fluid_bed_clearance"] = float(req.fluid_bed_clearance)
-    cfg_data["breach_width"] = float(req.breach_width)
+    cfg_data["reservoir_water_depth"] = _metres_to_sim(req.reservoir_water_depth_m)
+    cfg_data["reservoir_freeboard"] = _metres_to_sim(req.reservoir_freeboard_m)
+    cfg_data["fluid_bed_clearance"] = _metres_to_sim(req.fluid_bed_clearance_m)
+    cfg_data["breach_width"] = _metres_to_sim(req.breach_width_m)
     cfg_data["breach_time"] = float(req.breach_time)
-    cfg_data["dam_crest_height"] = float(req.dam_crest_height)
-    cfg_data["dam_thickness"] = float(req.dam_thickness)
+    cfg_data["dam_crest_height"] = _metres_to_sim(req.dam_crest_height_m)
+    cfg_data["dam_thickness"] = _metres_to_sim(req.dam_thickness_m)
+    cfg_data["dam_embedment"] = _metres_to_sim(req.dam_embedment_m)
+    cfg_data["reservoir_length"] = _metres_to_sim(req.reservoir_length_m)
+    cfg_data["reservoir_clip_to_wet_reach"] = bool(req.reservoir_clip_to_wet_reach)
+    # Explicit dam placement/orientation.  None lets the generator infer.
+    cfg_data["force_upstream_axis"] = dam_axis
+    cfg_data["force_upstream_sign"] = dam_sign
     cfg_path.write_text(json.dumps(cfg_data, indent=2))
 
     scenario = {
@@ -299,6 +361,10 @@ def prepare_site(site_slug: str, req: PrepareRequest):
         "description": f"Auto-generated site from uploaded DEM: {site_slug}",
         "longitude": float(req.lon),
         "latitude": float(req.lat),
+        # Dam anchor for conditioning / flow / domain / SPH terrain (defaults
+        # to the study-area center above).
+        "dam_longitude": dam_lon,
+        "dam_latitude": dam_lat,
         "data_root": f"data/terrain/{site_slug}",
         "runs_root": f"simulations/{site_slug}/runs",
         "inputs": {"dem": str(clipped.relative_to(REPO_ROOT))},

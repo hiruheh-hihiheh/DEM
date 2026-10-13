@@ -3,8 +3,8 @@
   "terrain_npz": "data\\terrain\\bhakra_test\\sph\\bhakra_test_sph_terrain.npz",
   "terrain_stl": "data\\terrain\\bhakra_test\\sph\\bhakra_test_sph_terrain.stl",
   "terrain_output_subdir": "terrain",
-  "definition_name": "HADR_TerrainChouldari_Def.xml",
-  "runner_definition_name": "HADR_TerrainChouldari_runner_Def.xml",
+  "definition_name": "HADR_TerrainBhakraTest_Def.xml",
+  "runner_definition_name": "HADR_TerrainBhakraTest_runner_Def.xml",
   "summary_name": "terrain_case_summary.json",
   "particle_spacing": 0.1,
   "simulation_time": 6.0,
@@ -35,5 +35,6 @@
   "breach_lift_duration": 0.3,
   "breach_lift_distance": 0.5,
   "breach_motion_steps": 50,
-  "breach_apron": true
+  "breach_apron": true,
+  "reservoir_clip_to_wet_reach": true
 }

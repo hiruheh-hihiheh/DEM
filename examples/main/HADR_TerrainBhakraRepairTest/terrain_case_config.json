@@ -35,5 +35,6 @@
   "breach_lift_duration": 0.3,
   "breach_lift_distance": 0.5,
   "breach_motion_steps": 50,
-  "breach_apron": true
+  "breach_apron": true,
+  "reservoir_clip_to_wet_reach": true
 }

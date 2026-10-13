@@ -394,6 +394,10 @@ def build_plan(scenario: Scenario, run_dir: Path) -> list[Step]:
     t = scenario.terrain
     out = scenario.outputs
     lon, lat = scenario.longitude, scenario.latitude
+    # Dam placement may differ from the study-area center: the study area is
+    # clipped about (lon, lat), but conditioning / flow / domain / SPH terrain
+    # are anchored on the dam.  They default to the study-area center.
+    dam_lon, dam_lat = scenario.dam_longitude, scenario.dam_latitude
     dem = scenario.inputs["dem"]
 
     if scenario.clip:
@@ -423,8 +427,8 @@ def build_plan(scenario: Scenario, run_dir: Path) -> list[Step]:
         label="Condition DEM",
         params={
             "max_fill_depth": cond["max_fill_depth"],
-            "dam_longitude": lon,
-            "dam_latitude": lat,
+            "dam_longitude": dam_lon,
+            "dam_latitude": dam_lat,
         },
         inputs=[dem],
         outputs=[out["conditioned"]]
@@ -432,7 +436,7 @@ def build_plan(scenario: Scenario, run_dir: Path) -> list[Step]:
         run=lambda ctx: _do_condition(
             ctx, dem, out["conditioned"],
             out["conditioned_preview"] if cond["preview"] else None,
-            cond["max_fill_depth"], lon, lat,
+            cond["max_fill_depth"], dam_lon, dam_lat,
         ),
     ))
 
@@ -441,12 +445,12 @@ def build_plan(scenario: Scenario, run_dir: Path) -> list[Step]:
         id="flow",
         stage="terrain",
         label="Generate flow accumulation",
-        params={"dam_longitude": lon, "dam_latitude": lat},
+        params={"dam_longitude": dam_lon, "dam_latitude": dam_lat},
         inputs=[out["conditioned"]],
         outputs=[out["flow_tif"]] + ([out["flow_preview"]] if flow["preview"] else []),
         run=lambda ctx: _do_flow(
             ctx, out["conditioned"], out["flow_tif"],
-            out["flow_preview"] if flow["preview"] else None, lon, lat,
+            out["flow_preview"] if flow["preview"] else None, dam_lon, dam_lat,
         ),
     ))
 
@@ -456,8 +460,8 @@ def build_plan(scenario: Scenario, run_dir: Path) -> list[Step]:
         stage="terrain",
         label="Generate flood domain",
         params={
-            "dam_longitude": lon,
-            "dam_latitude": lat,
+            "dam_longitude": dam_lon,
+            "dam_latitude": dam_lat,
             "corridor_width_km": dom["corridor_width_km"],
         },
         inputs=[out["conditioned"]],
@@ -465,7 +469,7 @@ def build_plan(scenario: Scenario, run_dir: Path) -> list[Step]:
         run=lambda ctx: _do_domain(
             ctx, out["conditioned"], out["domain_tif"],
             out["domain_preview"] if dom["preview"] else None,
-            dom["corridor_width_km"], lon, lat,
+            dom["corridor_width_km"], dam_lon, dam_lat,
         ),
     ))
 
@@ -475,8 +479,8 @@ def build_plan(scenario: Scenario, run_dir: Path) -> list[Step]:
         stage="sph",
         label="Generate SPH terrain (NPZ)",
         params={
-            "dam_longitude": lon,
-            "dam_latitude": lat,
+            "dam_longitude": dam_lon,
+            "dam_latitude": dam_lat,
             "target_resolution_m": sph["target_resolution_m"],
             "scale": sph["scale"],
             "csv": sph["csv"],
@@ -490,7 +494,7 @@ def build_plan(scenario: Scenario, run_dir: Path) -> list[Step]:
             out["sph_npz"],
             out["sph_csv"] if sph["csv"] else None,
             out["sph_preview"] if sph["preview"] else None,
-            lon, lat, sph["target_resolution_m"], sph["scale"],
+            dam_lon, dam_lat, sph["target_resolution_m"], sph["scale"],
         ),
     ))
 

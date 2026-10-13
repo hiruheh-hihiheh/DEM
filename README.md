@@ -147,6 +147,17 @@ the backend allows CORS from `http://localhost:5173`.
 The generated case XML goes to `simulations/templates/`, solver output to
 `simulations/runs/<simulation_id>/` (both ignored by Git).
 
+**Site onboarding** (`/api/sites/*`): upload a DEM, preview, then
+`POST /api/sites/<slug>/prepare` writes the scenario + case config. Its body
+takes the study area (`lon`, `lat`, `width_km`, `height_km`), optional dam
+placement/orientation (`dam_lon`, `dam_lat`, `dam_axis` = `x`/`y`,
+`dam_upstream_sign` = `±1`; blank infers them) and the reservoir/dam geometry in
+**metres** (`reservoir_water_depth_m`, `reservoir_freeboard_m`,
+`dam_crest_height_m`, `dam_thickness_m`, `dam_embedment_m`,
+`reservoir_length_m`, `fluid_bed_clearance_m`, `breach_width_m`), converted to
+simulation units with the terrain scale. See
+[`docs/scenario-runner.md`](docs/scenario-runner.md#case-geometry-keys-caseconfig--caseoverrides).
+
 ---
 
 ## GIS / DEM processing
@@ -216,6 +227,22 @@ python generate_terrain_case.py           # writes the case XML + terrain copies
 ```
 
 Details: [`examples/main/HADR_TerrainChouldari/README.md`](examples/main/HADR_TerrainChouldari/README.md).
+
+---
+
+## Tests
+
+Geometry and onboarding regression tests live in `tests/` and need neither
+DualSPHysics nor a DEM upload (they use the tracked Chouldari fixture plus
+synthetic terrain):
+
+```powershell
+backend\venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+They cover the dam span trim (inverted-abutment removal), breach centring on
+the wall as built, the `reservoir_clip_to_wet_reach` behaviour, the metre →
+simulation-unit onboarding conversion, and the scenario dam-placement anchor.
 
 ---
 

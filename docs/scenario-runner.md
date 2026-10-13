@@ -69,6 +69,12 @@ Every **relative path** in a scenario file is resolved against the repository ro
   "dam_id": "AN71MH0003",                 // id from data/dams/raw/dam.geojson (GET /api/dams)
                                           // alternative: explicit "longitude" + "latitude"
 
+  // OPTIONAL dam anchor. The study area is clipped about (longitude, latitude);
+  // conditioning / flow / domain / SPH terrain are anchored on the dam. Blank
+  // (or omitted) defaults it to the study-area centre.
+  "dam_longitude": 92.6592,               // dam placement (explicit)
+  "dam_latitude": 11.6244,
+
   "data_root": "data/terrain/chouldari",  // terrain products + manifest live here
   "runs_root": "simulations/chouldari/runs",
 
@@ -265,6 +271,27 @@ Notes:
   `generate_case(config_path: Path) -> dict`.
 - Machine-specific settings (like your DualSPHysics path) belong in
   `scenarios/local.json`, never in a committed scenario file.
+
+### Case geometry keys (`case.config` / `case.overrides`)
+
+The dam geometry is described by `terrain_case_config.json` in the case
+directory. `case.overrides` may set any of these keys (overrides win):
+
+| Key | Meaning |
+| --- | --- |
+| `force_upstream_axis` | `"x"` or `"y"` — flow axis through the dam; `null` infers it from the terrain. |
+| `force_upstream_sign` | `+1` or `-1` — which side of the dam is upstream; `null` infers it. |
+| `dam_crest_height` | Wall height above the local ground (simulation units, 1 sim = 1/`scale` m). |
+| `dam_thickness`, `dam_embedment` | Wall thickness and how far the wall base is buried below the footprint's lowest ground. |
+| `reservoir_water_depth`, `reservoir_freeboard` | Water column depth and freeboard below the crest. |
+| `reservoir_length` | Upstream reservoir extent from the dam face. |
+| `reservoir_clip_to_wet_reach` | When `true`, each reservoir segment ends at the waterline where its bed rises above the common water surface instead of dropping the whole segment or failing "Reservoir has at least one fluid segment". Default `false` (Chouldari geometry is byte-identical with it off). |
+| `fluid_bed_clearance`, `breach_width`, `breach_time`, `breach_enabled` | Fluid/bed gap, breach size and timing. |
+
+All lengths are in the case's simulation units (see
+`terrain.sph_terrain.scale` in the scenario). The site-onboarding API accepts
+the same geometry in **metres** and converts with that scale, so the numbers
+mean the same physical size at every site.
 
 ## Troubleshooting
 

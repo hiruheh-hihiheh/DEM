@@ -71,6 +71,21 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
   const [lat, setLat] = useState(31.4111)
   const [widthKm, setWidthKm] = useState(10)
   const [heightKm, setHeightKm] = useState(10)
+  // Optional explicit dam placement (blank => study-area centre) and orientation.
+  const [damLon, setDamLon] = useState('')
+  const [damLat, setDamLat] = useState('')
+  const [damAxis, setDamAxis] = useState<'auto' | 'x' | 'y'>('auto')
+  const [damSign, setDamSign] = useState<'auto' | '1' | '-1'>('auto')
+  // Reservoir / dam geometry in METRES (converted to simulation units on the server).
+  const [waterDepthM, setWaterDepthM] = useState(33)
+  const [freeboardM, setFreeboardM] = useState(2.5)
+  const [crestHeightM, setCrestHeightM] = useState(40)
+  const [thicknessM, setThicknessM] = useState(25)
+  const [embedmentM, setEmbedmentM] = useState(5)
+  const [reservoirLengthM, setReservoirLengthM] = useState(150)
+  const [bedClearanceM, setBedClearanceM] = useState(8)
+  const [breachWidthM, setBreachWidthM] = useState(50)
+  const [clipToWetReach, setClipToWetReach] = useState(true)
   const [preview, setPreview] = useState<SiteMeta | null>(null)
   const [prepareRes, setPrepareRes] = useState<PrepareResult | null>(null)
   const [pipelineRes, setPipelineRes] = useState<PipelineResult | null>(null)
@@ -126,14 +141,24 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
         lat,
         width_km: widthKm,
         height_km: heightKm,
-        reservoir_water_depth: 0.66,
-        breach_width: 1.0,
+        // Dam placement/orientation (null => infer / study-area centre).
+        dam_lon: damLon.trim() ? Number(damLon) : null,
+        dam_lat: damLat.trim() ? Number(damLat) : null,
+        dam_axis: damAxis === 'auto' ? null : damAxis,
+        dam_upstream_sign: damSign === 'auto' ? null : Number(damSign),
+        // Geometry in metres (same physical meaning at every site).
+        reservoir_water_depth_m: waterDepthM,
+        reservoir_freeboard_m: freeboardM,
+        dam_crest_height_m: crestHeightM,
+        dam_thickness_m: thicknessM,
+        dam_embedment_m: embedmentM,
+        reservoir_length_m: reservoirLengthM,
+        fluid_bed_clearance_m: bedClearanceM,
+        breach_width_m: breachWidthM,
         breach_time: 0.25,
         simulation_time: 6.0,
         particle_spacing: 0.1,
-        fluid_bed_clearance: 0.16,
-        dam_crest_height: 0.8,
-        dam_thickness: 0.5,
+        reservoir_clip_to_wet_reach: clipToWetReach,
       })
       setPrepareRes((res as PrepareResult) ?? null)
       notify('Scenario prepared')
@@ -206,6 +231,25 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
           <div style={{ marginBottom:8 }}>
             Dam location (lon, lat): <input value={lon} onChange={e=>setLon(parseFloat(e.target.value)||lon)} /> <input value={lat} onChange={e=>setLat(parseFloat(e.target.value)||lat)} />
           </div>
+          <div style={{ marginBottom:8 }}>
+            Dam anchor lon/lat (optional — blank uses the study-area centre):{' '}
+            <input placeholder="auto" value={damLon} onChange={e=>setDamLon(e.target.value)} />{' '}
+            <input placeholder="auto" value={damLat} onChange={e=>setDamLat(e.target.value)} />
+          </div>
+          <div style={{ marginBottom:8 }}>
+            Flow axis:{' '}
+            <select value={damAxis} onChange={e=>setDamAxis(e.target.value as 'auto' | 'x' | 'y')}>
+              <option value="auto">auto (infer from terrain)</option>
+              <option value="x">x</option>
+              <option value="y">y</option>
+            </select>{' '}
+            Upstream side:{' '}
+            <select value={damSign} onChange={e=>setDamSign(e.target.value as 'auto' | '1' | '-1')}>
+              <option value="auto">auto (infer from terrain)</option>
+              <option value="1">+1</option>
+              <option value="-1">-1</option>
+            </select>
+          </div>
           <button disabled={loading} onClick={()=>setStep(3)}>Next</button>
         </div>
       )}
@@ -229,6 +273,24 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
       {step===4 && (
         <div>
           <h3>Prepare Scenario & Case</h3>
+          <p style={{ color: '#9ca3af', fontSize: '0.85rem' }}>
+            Reservoir and dam dimensions are in metres. The backend converts them to the terrain
+            simulation scale so the same numbers mean the same physical size at every site.
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(260px, 1fr))', gap: 8, marginBottom: 12 }}>
+            <label>Reservoir water depth (m): <input type="number" value={waterDepthM} onChange={e=>setWaterDepthM(parseFloat(e.target.value)||0)} /></label>
+            <label>Reservoir freeboard (m): <input type="number" value={freeboardM} onChange={e=>setFreeboardM(parseFloat(e.target.value)||0)} /></label>
+            <label>Dam crest height (m): <input type="number" value={crestHeightM} onChange={e=>setCrestHeightM(parseFloat(e.target.value)||0)} /></label>
+            <label>Dam thickness (m): <input type="number" value={thicknessM} onChange={e=>setThicknessM(parseFloat(e.target.value)||0)} /></label>
+            <label>Dam embedment (m): <input type="number" value={embedmentM} onChange={e=>setEmbedmentM(parseFloat(e.target.value)||0)} /></label>
+            <label>Reservoir length (m): <input type="number" value={reservoirLengthM} onChange={e=>setReservoirLengthM(parseFloat(e.target.value)||0)} /></label>
+            <label>Fluid bed clearance (m): <input type="number" value={bedClearanceM} onChange={e=>setBedClearanceM(parseFloat(e.target.value)||0)} /></label>
+            <label>Breach width (m): <input type="number" value={breachWidthM} onChange={e=>setBreachWidthM(parseFloat(e.target.value)||0)} /></label>
+          </div>
+          <label style={{ display: 'block', marginBottom: 12 }}>
+            <input type="checkbox" checked={clipToWetReach} onChange={e=>setClipToWetReach(e.target.checked)} />{' '}
+            End reservoir segments at the waterline where the bed rises above it
+          </label>
           <button disabled={loading} onClick={handlePrepare}>Prepare</button>
           {prepareRes && (
             <div style={{ marginTop:12 }}>

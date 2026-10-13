@@ -48,7 +48,7 @@ examples/**/terrain/
 examples/**/*_Def.xml
 examples/**/*_gate_motion.txt
 examples/**/terrain_case_summary.json
-examples/**/chouldari_sph_terrain.stl
+examples/**/*_sph_terrain.stl
 examples/**/*_geometry_preview*
 
 # ========================= Scenario runner =========================

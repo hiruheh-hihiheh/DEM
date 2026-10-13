@@ -1,8 +1,14 @@
-# HADR Terrain Chouldari — Experimental DualSPHysics Terrain Integration Case
+# HADR Terrain Bhakra Test — Experimental DualSPHysics Terrain Integration Case
 
 This is an experimental terrain-import integration case.
 
 It is separate from the validated synthetic dam-break prototype.
+
+The concrete case name, generated XML filenames, summary name and terrain paths
+are read from `terrain_case_config.json` in this directory, so the same
+generator and helper scripts work for any generated site case. The committed
+example is `HADR_TerrainChouldari`; the site-onboarding API writes site-specific
+copies such as this one.
 
 ## Purpose
 
@@ -14,13 +20,14 @@ The first objective is only to prove that DualSPHysics can:
 4. Advance a short simulation on GPU.
 5. Produce VTK output.
 
-This is **not** the final SIH flood model.
+This is **not** the final SIH flood model, and no DualSPHysics run of this case
+has been validated yet.
 
 ## Terrain source
 
 - Source DEM: Copernicus GLO-30 DSM
-- Intermediate terrain: `data/terrain/chouldari/sph/chouldari_sph_terrain.npz`
-- Terrain mesh: `data/terrain/chouldari/sph/chouldari_sph_terrain.stl`
+- Intermediate terrain NPZ: the `terrain_npz` path in `terrain_case_config.json`
+- Terrain mesh STL: the `terrain_stl` path in `terrain_case_config.json`
 - Numerical prototype scale: stored in the NPZ, currently approximately `0.02`
 
 The STL coordinates are already in scaled simulation coordinates:
@@ -31,12 +38,57 @@ The STL coordinates are already in scaled simulation coordinates:
 
 No additional scaling is applied by this case generator.
 
+## Data limitation (Bhakra / Gobind Sagar)
+
+The supplied Bhakra coordinate lies on the flat Gobind Sagar **reservoir
+surface** in the Copernicus GLO-30 **DSM**. A DSM records the top of the
+surface it images, so over a reservoir it returns the water surface, not the
+reservoir bed.
+
+Consequences for this case:
+
+- The dam, reservoir and breach geometry are terrain-anchored to a near-flat
+  water-surface plane instead of the real valley floor.
+- The generator's strict terrain-containment checks (each dam segment bottom
+  below the common crest, and both dam ends reaching the water surface) cannot
+  all be satisfied on this DSM; they are expected to fail until better terrain
+  is supplied.
+- The resulting geometry must **not** be read as the real Gobind Sagar
+  impoundment, and no flood result may be reported from it.
+
+A physically valid Bhakra geometry needs a **bare-earth DEM/DTM** (reservoir
+bathymetry or a surface-water-removed terrain model) at a resolution that
+resolves the valley walls. Until then this case is a data-quality regression
+fixture, not a simulation.
+
 ## Generated files
 
-Run the generator to create:
+Run the generator to create (names come from `terrain_case_config.json`):
 
 ```text
-terrain/chouldari_sph_terrain.stl
-HADR_TerrainChouldari_Def.xml
-HADR_TerrainChouldari_runner_Def.xml
-terrain_case_summary.json
+<terrain_output_subdir>/<case_name>_sph_terrain.stl
+<case_name>_Def.xml
+<case_name>_runner_Def.xml
+<summary_name>
+```
+
+Helper scripts in this directory:
+
+- `preview_terrain_case.py` — reads this case's `terrain_case_summary.json`
+  and `definition_name` XML and renders a geometry debug preview (PNG/VTK/JSON).
+- `analyze_particle_outflow.py` — reads this case's solver `.out` / `solver.log`
+  and VTK particles; `--out-dir` selects which run directory is inspected.
+- `run_standalone_case.bat` — reads `case_name` from the config, then runs
+  GenCase, DualSPHysics and PartVTK for this case.
+- `run_with_backend_runner.py` — runs the generated `runner_definition_name`
+  XML through the backend `SPHRunner`.
+
+None of these scripts run GenCase or DualSPHysics unless explicitly invoked,
+and none of them modify the terrain, the generated geometry or the XML.
+
+## Validation status
+
+This is a debug/experimental integration case. The dam, reservoir, breach and
+flood geometry are terrain-anchored but are **not** a physically validated
+model. See `terrain_case_summary.json` (validation status and messages) after
+running the generator.

@@ -1,4 +1,4 @@
-# HADR Terrain — Experimental DualSPHysics Terrain Integration Case
+# HADR Terrain Bhakra Repair Test — Experimental DualSPHysics Terrain Integration Case
 
 This is an experimental terrain-import integration case.
 
@@ -20,7 +20,8 @@ The first objective is only to prove that DualSPHysics can:
 4. Advance a short simulation on GPU.
 5. Produce VTK output.
 
-This is **not** the final SIH flood model.
+This is **not** the final SIH flood model, and no DualSPHysics run of this case
+has been validated yet.
 
 ## Terrain source
 
@@ -36,6 +37,29 @@ The STL coordinates are already in scaled simulation coordinates:
 - `z_sim`
 
 No additional scaling is applied by this case generator.
+
+## Data limitation (Bhakra / Gobind Sagar)
+
+The supplied Bhakra coordinate lies on the flat Gobind Sagar **reservoir
+surface** in the Copernicus GLO-30 **DSM**. A DSM records the top of the
+surface it images, so over a reservoir it returns the water surface, not the
+reservoir bed.
+
+Consequences for this case:
+
+- The dam, reservoir and breach geometry are terrain-anchored to a near-flat
+  water-surface plane instead of the real valley floor.
+- The generator's strict terrain-containment checks (each dam segment bottom
+  below the common crest, and both dam ends reaching the water surface) cannot
+  all be satisfied on this DSM; they are expected to fail until better terrain
+  is supplied.
+- The resulting geometry must **not** be read as the real Gobind Sagar
+  impoundment, and no flood result may be reported from it.
+
+A physically valid Bhakra geometry needs a **bare-earth DEM/DTM** (reservoir
+bathymetry or a surface-water-removed terrain model) at a resolution that
+resolves the valley walls. Until then this case is a data-quality regression
+fixture, not a simulation.
 
 ## Generated files
 
