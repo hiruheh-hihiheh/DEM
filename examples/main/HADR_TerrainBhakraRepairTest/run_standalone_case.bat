@@ -3,7 +3,15 @@ setlocal
 
 cd /d "%~dp0"
 
-set CASE_NAME=HADR_TerrainChouldari
+rem Read the generated case name from this case's config so the runner uses the
+rem correct definition XML and output directory for any site (not just
+rem HADR_TerrainChouldari).
+set CASE_NAME=
+if exist "terrain_case_config.json" (
+    for /f "tokens=2 delims=:, " %%a in ('findstr /c:"case_name" "terrain_case_config.json"') do set CASE_NAME=%%~a
+)
+if "%CASE_NAME%"=="" set CASE_NAME=HADR_TerrainChouldari
+
 set DEF_BASE=%CASE_NAME%_Def
 set OUT_DIR=%CASE_NAME%_out
 

@@ -1,5 +1,5 @@
 """
-Generate the experimental HADR_TerrainChouldari terrain breach case.
+Generate an experimental terrain breach case for site-generated terrain.
 
 This redesigned generator builds the dam/reservoir/breach geometry from the
 DEM-derived terrain points instead of using an arbitrary rectangular wall and
@@ -1610,7 +1610,7 @@ def _validate_geometry(
 
 def _print_summary(summary: dict) -> None:
     print("=" * 78)
-    print("HADR_TerrainChouldari redesigned terrain breach summary")
+    print(f"{summary['case_name']} redesigned terrain breach summary")
     print("=" * 78)
 
     print(f"Case name: {summary['case_name']}")

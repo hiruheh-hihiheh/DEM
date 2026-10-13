@@ -1,5 +1,10 @@
 """
-Particle outflow diagnostic for HADR_TerrainChouldari.
+Particle outflow diagnostic for the terrain case in this directory.
+
+The case name, generated XML names, summary name and default solver output
+directory are read from terrain_case_config.json, so the same script works for
+any generated site case (e.g. HADR_TerrainChouldari, HADR_TerrainBhakraRepairTest)
+without editing hard-coded Chouldari paths.
 
 This script inspects the DualSPHysics solver log and generated VTK particle
 files to determine why fluid particles are being excluded from the simulation.
@@ -17,7 +22,31 @@ import numpy as np
 
 
 CASE_DIR = Path(__file__).resolve().parent
-OUT_DIR = CASE_DIR / "HADR_TerrainChouldari_out"
+CONFIG_PATH = CASE_DIR / "terrain_case_config.json"
+
+
+def _load_case_config() -> dict:
+    """Read this case's terrain_case_config.json (empty dict if unavailable)."""
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - diagnostic script, keep going
+        print(f"WARNING: cannot parse {CONFIG_PATH.name}: {exc}")
+        return {}
+
+
+_CASE_CFG = _load_case_config()
+
+# Site-specific names come from the generated case config. The defaults keep the
+# script working for a hand-edited case that still uses the template names.
+CASE_NAME = str(_CASE_CFG.get("case_name", "HADR_TerrainChouldari"))
+SUMMARY_NAME = str(_CASE_CFG.get("summary_name", "terrain_case_summary.json"))
+DEFINITION_NAME = str(_CASE_CFG.get("definition_name", f"{CASE_NAME}_Def.xml"))
+
+# Default solver output directory for the standalone case. Override with
+# --out-dir (e.g. --out-dir simulations/<site>/runs/<timestamp>).
+OUT_DIR = CASE_DIR / f"{CASE_NAME}_out"
 PARTICLES_DIR = OUT_DIR / "particles"
 
 
@@ -278,7 +307,7 @@ def parse_solver_log(log_path: Path) -> tuple[list[dict], int, list[str]]:
 # ---------------------------------------------------------------------------
 
 def load_summary() -> dict | None:
-    summary_path = CASE_DIR / "terrain_case_summary.json"
+    summary_path = CASE_DIR / SUMMARY_NAME
     if not summary_path.exists():
         print(f"ERROR: {summary_path} not found.")
         return None
@@ -480,7 +509,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Particle outflow diagnostic for HADR_TerrainChouldari "
+            f"Particle outflow diagnostic for {CASE_NAME} "
             "(read-only: parses the solver log and generated VTK particles)."
         )
     )
@@ -489,9 +518,8 @@ def main() -> int:
         default=None,
         help=(
             "Simulation output directory to inspect: the directory containing "
-            "solver.log (default: HADR_TerrainChouldari_out next to this "
-            "script). Point it at a scenario-runner run directory to analyze "
-            "that run."
+            f"the solver log (default: {CASE_NAME}_out next to this script). "
+            "Point it at a scenario-runner run directory to analyze that run."
         ),
     )
     args = parser.parse_args()
@@ -501,7 +529,7 @@ def main() -> int:
         PARTICLES_DIR = OUT_DIR / "particles"
 
     print("=" * 78)
-    print("HADR_TerrainChouldari  Particle Outflow Diagnostic")
+    print(f"{CASE_NAME}  Particle Outflow Diagnostic")
     print("=" * 78)
 
     # ---- geometry / domain ----
@@ -519,9 +547,16 @@ def main() -> int:
     upstream_sign = float(upstream.get("upstream_sign", 1.0))
 
     # ---- solver log ----
-    out_path = OUT_DIR / "HADR_TerrainChouldari.out"
+    # Standalone runs write <case_name>.out; the scenario runner writes
+    # solver.log in the run directory. Accept either, then fall back to any
+    # single *.out file in the output directory.
+    out_path = OUT_DIR / f"{CASE_NAME}.out"
     log_path = OUT_DIR / "solver.log"
     target_log = out_path if out_path.exists() else log_path
+    if not target_log.exists() and OUT_DIR.is_dir():
+        candidates = sorted(OUT_DIR.glob("*.out"))
+        if candidates:
+            target_log = candidates[0]
 
     print(f"\n2. Solver Log  ({target_log.name if target_log.exists() else 'NOT FOUND'})")
     print("-" * 60)
@@ -560,7 +595,7 @@ def main() -> int:
             immediate_drop = True
 
     # ---- XML "default" domain check ----
-    xml_path = CASE_DIR / "HADR_TerrainChouldari_Def.xml"
+    xml_path = CASE_DIR / DEFINITION_NAME
     xml_uses_default = False
     if xml_path.exists():
         try:

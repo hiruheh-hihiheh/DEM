@@ -1,0 +1,59 @@
+{
+  "name": "bhakra_gorge_test",
+  "display_name": "Bhakra Gorge Test",
+  "description": "Auto-generated site from uploaded DEM: bhakra_gorge_test",
+  "longitude": 76.43111,
+  "latitude": 31.40944,
+  "data_root": "data/terrain/bhakra_gorge_test",
+  "runs_root": "simulations/bhakra_gorge_test/runs",
+  "inputs": {
+    "dem": "data\\terrain\\bhakra_gorge_test\\processed\\bhakra_gorge_test_clip.tif"
+  },
+  "clip": {
+    "source_dem": "data\\terrain\\bhakra_gorge_test\\input\\bhakra.tif",
+    "width_km": 10.0,
+    "height_km": 10.0
+  },
+  "terrain": {
+    "condition": {
+      "max_fill_depth": 5.0,
+      "preview": true
+    },
+    "flow": {
+      "preview": true
+    },
+    "domain": {
+      "corridor_width_km": 1.0,
+      "preview": true
+    },
+    "sph_terrain": {
+      "target_resolution_m": 30.0,
+      "scale": 0.02,
+      "csv": true,
+      "preview": true
+    },
+    "mesh": {
+      "max_edge_m": 1.5,
+      "preview": true
+    }
+  },
+  "case": {
+    "generator": "examples\\main\\HADR_TerrainBhakraGorgeTest\\generate_terrain_case.py",
+    "config": "examples\\main\\HADR_TerrainBhakraGorgeTest\\terrain_case_config.json",
+    "overrides": {},
+    "geometry_preview": true
+  },
+  "simulation": {
+    "enabled": true
+  },
+  "postprocess": [
+    {
+      "name": "Particle outflow diagnostic",
+      "script": "examples\\main\\HADR_TerrainBhakraGorgeTest\\analyze_particle_outflow.py",
+      "args": [
+        "--out-dir",
+        "{sim_run_dir}"
+      ]
+    }
+  ]
+}

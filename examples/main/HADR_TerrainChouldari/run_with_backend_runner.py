@@ -4,6 +4,10 @@ backend SPHRunner infrastructure.
 
 This does NOT modify runner.py.
 
+The runner definition XML name is read from this case's
+terrain_case_config.json (runner_definition_name), so it works for any
+generated site case without editing hard-coded Chouldari paths.
+
 Important:
 - The current SPHRunner hardcodes the internal case name HADR_DamBreak.
 - This terrain run is still isolated because SPHRunner creates a unique
@@ -24,7 +28,25 @@ CASE_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CASE_DIR.parents[2]
 BACKEND_DIR = REPO_ROOT / "backend"
 
-RUNNER_XML = CASE_DIR / "HADR_TerrainChouldari_runner_Def.xml"
+
+def _load_case_config() -> dict:
+    config_path = CASE_DIR / "terrain_case_config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        return json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - helper script
+        print(f"WARNING: cannot parse {config_path.name}: {exc}")
+        return {}
+
+
+_CFG = _load_case_config()
+CASE_NAME = str(_CFG.get("case_name", "HADR_TerrainChouldari"))
+RUNNER_DEFINITION_NAME = str(
+    _CFG.get("runner_definition_name", f"{CASE_NAME}_runner_Def.xml")
+)
+
+RUNNER_XML = CASE_DIR / RUNNER_DEFINITION_NAME
 RUNS_DIR = REPO_ROOT / "simulations" / "runs"
 
 

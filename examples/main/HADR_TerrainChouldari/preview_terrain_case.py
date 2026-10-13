@@ -1,5 +1,5 @@
 """
-Debug geometry preview for HADR_TerrainChouldari.
+Debug geometry preview for the terrain case in this directory.
 
 This script visualizes the generated experimental terrain breach geometry:
 
@@ -26,9 +26,13 @@ It does NOT:
 - modify Delft3D integration
 - claim that the dam or reservoir is physically validated
 
+The case name, XML names and summary name are read from
+terrain_case_config.json, so this works for any generated site case without
+editing hard-coded Chouldari paths.
+
 The preview reads the already generated:
-- terrain_case_summary.json
-- HADR_TerrainChouldari_Def.xml
+- terrain_case_summary.json (summary_name in the config)
+- <case_name>_Def.xml (definition_name in the config)
 and the terrain NPZ/STL inputs.
 """
 
@@ -1364,7 +1368,7 @@ def create_png(geom: dict, out_path: Path, case_name: str) -> None:
 # VTK preview
 # ----------------------------------------------------------------------
 
-def write_vtk(geom: dict, out_path: Path) -> None:
+def write_vtk(geom: dict, out_path: Path, case_name: str) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     points: list[tuple[float, float, float]] = []
@@ -1503,7 +1507,7 @@ def write_vtk(geom: dict, out_path: Path) -> None:
 
     with out_path.open("w", encoding="ascii", newline="\n") as file:
         file.write("# vtk DataFile Version 5.0\n")
-        file.write("HADR_TerrainChouldari geometry debug preview\n")
+        file.write(f"{case_name} geometry debug preview\n")
         file.write("ASCII\n")
         file.write("DATASET POLYDATA\n")
 
@@ -1660,9 +1664,9 @@ def build_metadata(
 # Terminal report
 # ----------------------------------------------------------------------
 
-def print_report(geom: dict, metadata: dict, paths: dict) -> None:
+def print_report(geom: dict, metadata: dict, paths: dict, case_name: str) -> None:
     print("=" * 78)
-    print("HADR_TerrainChouldari geometry debug preview")
+    print(f"{case_name} geometry debug preview")
     print("=" * 78)
 
     print("Purpose: visual debugging only. No GenCase or DualSPHysics run attempted.")
@@ -1798,7 +1802,7 @@ def run_preview(
     create_png(geom, Path(png_path), case_name)
 
     if write_vtk_output and vtk_path is not None:
-        write_vtk(geom, Path(vtk_path))
+        write_vtk(geom, Path(vtk_path), case_name)
 
     metadata = build_metadata(cfg, summary, geom, parsed, paths)
 
@@ -1808,7 +1812,7 @@ def run_preview(
         encoding="utf-8",
     )
 
-    print_report(geom, metadata, paths)
+    print_report(geom, metadata, paths, case_name)
 
     return metadata
 
@@ -1816,8 +1820,9 @@ def run_preview(
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate a debug preview of the HADR_TerrainChouldari generated "
-            "dam/reservoir/breach geometry. Does not run GenCase or DualSPHysics."
+            "Generate a debug preview of the generated dam/reservoir/breach "
+            "geometry for the terrain case in this directory. Does not run "
+            "GenCase or DualSPHysics."
         )
     )
 

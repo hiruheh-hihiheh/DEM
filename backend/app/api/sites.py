@@ -183,12 +183,33 @@ _TEMPLATE_STALE_FILES = (
     "terrain_case_summary.json",
 )
 
+# The template also ships a complete example solver-output tree and Python byte
+# caches. These contain Chouldari runtime paths (log, particles, bi4/vtk) and
+# must never be inherited by a generated case.
+_TEMPLATE_STALE_DIRS = (
+    f"{TEMPLATE_CASE_NAME}_out",
+    "__pycache__",
+)
+
+
+def _is_template_stale(name: str) -> bool:
+    return name in _TEMPLATE_STALE_FILES or name in _TEMPLATE_STALE_DIRS
+
+
+def _ignore_template_artifacts(dir_path: str, names: list[str]) -> set[str]:
+    """copytree ignore hook: skip template-only example outputs."""
+    return {name for name in names if _is_template_stale(name)}
+
 
 def _scrub_template_outputs(dst_dir: Path) -> None:
     for name in _TEMPLATE_STALE_FILES:
         stale = dst_dir / name
         if stale.exists():
             stale.unlink()
+    for name in _TEMPLATE_STALE_DIRS:
+        stale = dst_dir / name
+        if stale.is_dir():
+            shutil.rmtree(stale)
 
 
 def _safe_case_dir(src_dir: Path, dst_dir: Path) -> None:
@@ -197,15 +218,18 @@ def _safe_case_dir(src_dir: Path, dst_dir: Path) -> None:
     Never deletes an existing case directory: re-preparation must preserve
     simulation outputs and results. Only files that are missing are copied
     from the template; existing files are left untouched. When a genuinely
-    new case is created, unrelated template example outputs are removed so the
-    case contains only site-specific artifacts.
+    new case is created, unrelated template example outputs (including the
+    Chouldari solver-output tree and terrain STL) are excluded so the case
+    contains only site-specific artifacts.
     """
     if not dst_dir.exists():
-        shutil.copytree(src_dir, dst_dir)
+        shutil.copytree(src_dir, dst_dir, ignore=_ignore_template_artifacts)
         _scrub_template_outputs(dst_dir)
         return
     for src in src_dir.rglob("*"):
         rel = src.relative_to(src_dir)
+        if any(_is_template_stale(part) for part in rel.parts):
+            continue
         dst = dst_dir / rel
         if src.is_dir():
             dst.mkdir(parents=True, exist_ok=True)
