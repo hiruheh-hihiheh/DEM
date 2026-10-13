@@ -330,6 +330,96 @@ class OnboardingUnitsTests(unittest.TestCase):
                     )
             self.assertEqual(ctx.exception.status_code, 400)
 
+    # -- dam coordinate validation ------------------------------------------
+
+    def _prepare_ok_in_tmp(self, **request_kwargs):
+        """Run prepare_site in an isolated temp repo; return (result, scenario)."""
+        sites = self.sites
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root, examples, scenarios = self._build_case_env(root)
+            with self._patched_roots(root, data_root, examples, scenarios):
+                result = sites.prepare_site(
+                    "_test_site", sites.PrepareRequest(**request_kwargs)
+                )
+            scenario = json.loads((scenarios / "_test_site.json").read_text(encoding="utf-8"))
+        return result, scenario
+
+    def _prepare_400_in_tmp(self, **request_kwargs):
+        """Run prepare_site expecting a 400; return (exception, case_created)."""
+        sites = self.sites
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root, examples, scenarios = self._build_case_env(root)
+            with self._patched_roots(root, data_root, examples, scenarios):
+                with self.assertRaises(sites.HTTPException) as ctx:
+                    sites.prepare_site(
+                        "_test_site", sites.PrepareRequest(**request_kwargs)
+                    )
+                case_created = (examples / "HADR_TerrainTestSite").exists()
+        return ctx.exception, case_created
+
+    def test_prepare_site_rejects_dam_lon_without_lat(self):
+        exc, case_created = self._prepare_400_in_tmp(lon=76.0, lat=31.0, dam_lon=76.25)
+        self.assertEqual(exc.status_code, 400)
+        self.assertIn("together", str(exc.detail))
+        # Validation ran before any case configuration was created.
+        self.assertFalse(case_created)
+
+    def test_prepare_site_rejects_dam_lat_without_lon(self):
+        exc, case_created = self._prepare_400_in_tmp(lon=76.0, lat=31.0, dam_lat=31.25)
+        self.assertEqual(exc.status_code, 400)
+        self.assertIn("together", str(exc.detail))
+        self.assertFalse(case_created)
+
+    def test_prepare_site_rejects_out_of_range_dam_longitude(self):
+        exc, case_created = self._prepare_400_in_tmp(
+            lon=76.0, lat=31.0, dam_lon=200.0, dam_lat=31.25
+        )
+        self.assertEqual(exc.status_code, 400)
+        self.assertIn("dam_lon", str(exc.detail))
+        self.assertIn("-180 and 180", str(exc.detail))
+        self.assertFalse(case_created)
+
+    def test_prepare_site_rejects_out_of_range_dam_latitude(self):
+        exc, case_created = self._prepare_400_in_tmp(
+            lon=76.0, lat=31.0, dam_lon=76.25, dam_lat=100.0
+        )
+        self.assertEqual(exc.status_code, 400)
+        self.assertIn("dam_lat", str(exc.detail))
+        self.assertIn("-90 and 90", str(exc.detail))
+        self.assertFalse(case_created)
+
+    def test_prepare_site_rejects_out_of_range_study_area(self):
+        exc, case_created = self._prepare_400_in_tmp(lon=200.0, lat=31.0)
+        self.assertEqual(exc.status_code, 400)
+        self.assertIn("lon", str(exc.detail))
+        self.assertIn("-180 and 180", str(exc.detail))
+        self.assertFalse(case_created)
+
+    def test_prepare_site_accepts_valid_dam_coordinate_pair(self):
+        result, scenario = self._prepare_ok_in_tmp(
+            lon=76.0, lat=31.0, dam_lon=-10.5, dam_lat=45.25
+        )
+        self.assertTrue(result["ok"])
+        self.assertAlmostEqual(scenario["longitude"], 76.0)
+        self.assertAlmostEqual(scenario["dam_longitude"], -10.5)
+        self.assertAlmostEqual(scenario["dam_latitude"], 45.25)
+
+    def test_prepare_site_accepts_dam_coordinate_boundaries(self):
+        result, scenario = self._prepare_ok_in_tmp(
+            lon=0.0, lat=0.0, dam_lon=180.0, dam_lat=90.0
+        )
+        self.assertTrue(result["ok"])
+        self.assertAlmostEqual(scenario["dam_longitude"], 180.0)
+        self.assertAlmostEqual(scenario["dam_latitude"], 90.0)
+
+    def test_prepare_site_defaults_dam_to_study_area_when_omitted(self):
+        result, scenario = self._prepare_ok_in_tmp(lon=76.0, lat=31.0)
+        self.assertTrue(result["ok"])
+        self.assertAlmostEqual(scenario["dam_longitude"], 76.0)
+        self.assertAlmostEqual(scenario["dam_latitude"], 31.0)
+
 
 # ---------------------------------------------------------------------------
 # Scenario dam placement (scripts/scenario_runner/config.py)

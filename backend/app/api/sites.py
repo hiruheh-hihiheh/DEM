@@ -102,6 +102,25 @@ def _slugify(text: str) -> str:
     return text or f"site_{uuid.uuid4().hex[:6]}"
 
 
+def _validate_lon_lat(lon: float, lat: float, lon_name: str, lat_name: str) -> None:
+    """Range-check WGS84 degrees, raising HTTP 400 with a clear message.
+
+    ``lon_name``/``lat_name`` are the request field names, so the error points
+    at exactly which coordinate (and which source, study area vs dam anchor) is
+    out of range.
+    """
+    if not (-180.0 <= lon <= 180.0):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{lon_name} must be between -180 and 180 (got {lon})",
+        )
+    if not (-90.0 <= lat <= 90.0):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{lat_name} must be between -90 and 90 (got {lat})",
+        )
+
+
 def _metres_to_sim(value: float) -> float:
     """Convert a length in metres to terrain simulation units."""
     return float(value) * TERRAIN_SCALE
@@ -325,9 +344,26 @@ def prepare_site(site_slug: str, req: PrepareRequest):
                     "the upstream side is undefined while the flow axis is inferred"
                 ),
             )
-    # Default the dam anchor to the study-area center.
-    dam_lon = float(req.dam_lon) if req.dam_lon is not None else float(req.lon)
-    dam_lat = float(req.dam_lat) if req.dam_lat is not None else float(req.lat)
+    # --- Coordinate validation (runs before any case config is created) --
+    # The study-area centre is always validated; the dam anchor, when given,
+    # must be a complete, valid pair. Both dam_lon and dam_lat are required
+    # together, or both omitted to fall back to the (validated) study area.
+    _validate_lon_lat(float(req.lon), float(req.lat), "lon", "lat")
+    if (req.dam_lon is None) != (req.dam_lat is None):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "dam_lon and dam_lat must be provided together, or both left "
+                "empty to use the study-area center"
+            ),
+        )
+    if req.dam_lon is not None:
+        dam_lon = float(req.dam_lon)
+        dam_lat = float(req.dam_lat)
+        _validate_lon_lat(dam_lon, dam_lat, "dam_lon", "dam_lat")
+    else:
+        dam_lon = float(req.lon)
+        dam_lat = float(req.lat)
 
     src_dir = EXAMPLES_ROOT / "HADR_TerrainChouldari"
     dst_dir = EXAMPLES_ROOT / case_name_full

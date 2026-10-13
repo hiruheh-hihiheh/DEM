@@ -133,6 +133,39 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
 
   const handlePrepare = async () => {
     if (loading) return
+    // Dam anchor coordinates must be supplied as a complete pair, or omitted
+    // entirely to fall back to the study-area center. Mirror the server rules
+    // so the user gets immediate feedback instead of a 400 round-trip.
+    if (lon < -180 || lon > 180) {
+      notify('Study-area longitude must be between -180 and 180.', true)
+      return
+    }
+    if (lat < -90 || lat > 90) {
+      notify('Study-area latitude must be between -90 and 90.', true)
+      return
+    }
+    const hasDamLon = damLon.trim() !== ''
+    const hasDamLat = damLat.trim() !== ''
+    if (hasDamLon !== hasDamLat) {
+      notify('Dam anchor needs BOTH longitude and latitude, or leave both blank to use the study-area center.', true)
+      return
+    }
+    if (hasDamLon) {
+      const dLon = Number(damLon)
+      const dLat = Number(damLat)
+      if (!Number.isFinite(dLon) || !Number.isFinite(dLat)) {
+        notify('Dam anchor longitude and latitude must be numbers.', true)
+        return
+      }
+      if (dLon < -180 || dLon > 180) {
+        notify('Dam anchor longitude must be between -180 and 180.', true)
+        return
+      }
+      if (dLat < -90 || dLat > 90) {
+        notify('Dam anchor latitude must be between -90 and 90.', true)
+        return
+      }
+    }
     setLoading(true)
     setMsg(null)
     try {
@@ -235,6 +268,11 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
             Dam anchor lon/lat (optional — blank uses the study-area centre):{' '}
             <input placeholder="auto" value={damLon} onChange={e=>setDamLon(e.target.value)} />{' '}
             <input placeholder="auto" value={damLat} onChange={e=>setDamLat(e.target.value)} />
+            {(damLon.trim() === '') !== (damLat.trim() === '') && (
+              <span style={{ color:'#fca5a5', fontSize:'0.85rem', marginLeft:8 }}>
+                Provide both longitude and latitude, or leave both blank.
+              </span>
+            )}
           </div>
           <div style={{ marginBottom:8 }}>
             Flow axis:{' '}
