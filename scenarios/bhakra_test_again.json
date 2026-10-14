@@ -12,7 +12,7 @@
     "dem": "data\\terrain\\bhakra_test_again\\processed\\bhakra_test_again_clip.tif"
   },
   "clip": {
-    "source_dem": "data\\terrain\\bhakra_test_again\\input\\bhakra_test_again_433071_bhakra.tif",
+    "source_dem": "data\\terrain\\bhakra_test_again\\input\\bhakra_test_again_926b5d_bhakra.tif",
     "width_km": 10.0,
     "height_km": 10.0
   },

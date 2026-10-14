@@ -5,6 +5,8 @@ import type { JobStatus, JobSummary } from '../types/simulation'
 
 interface HistoryPageProps {
   jobs: JobSummary[]
+  /** Latest job-list load failure, kept visible without flipping the backend offline. */
+  error?: string | null
   onRefresh: () => void
   onOpenRun: (jobId: string) => void
   onViewResult: (jobId: string) => void
@@ -26,6 +28,7 @@ const fmtDuration = (seconds: number | null): string => {
 
 export const HistoryPage: React.FC<HistoryPageProps> = ({
   jobs,
+  error,
   onRefresh,
   onOpenRun,
   onViewResult,
@@ -102,6 +105,12 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
             onOpenRun(jobId)
           }}
         />
+      )}
+
+      {error && (
+        <div className="error-banner mb-3" role="alert">
+          {error}
+        </div>
       )}
 
       {notice && (

@@ -1,11 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import './styles/simulation.css'
 
 import { Header } from './components/Header'
 import { NavBar, type View } from './components/NavBar'
 import { StatusBadge } from './components/StatusBadge'
-import { fetchDams, fetchJobs, fetchScenarios } from './services/api'
+import {
+  fetchDams,
+  fetchJobs,
+  fetchScenarios,
+  fetchSystemStatus,
+} from './services/api'
+import {
+  BackendHealthTracker,
+  classifyRequestFailure,
+  describeRequestFailure,
+  type Reachability,
+} from './services/backendHealth'
 
 import { ConfigurePage } from './pages/ConfigurePage'
 import { Dashboard } from './pages/Dashboard'
@@ -17,7 +28,11 @@ import { ViewerPage } from './pages/ViewerPage'
 import { OnboardPage } from './pages/OnboardPage'
 
 import type { DamGeoJSON } from './types/dam'
-import type { JobSummary, ScenarioInfo } from './types/simulation'
+import type {
+  JobSummary,
+  JobsListResponse,
+  ScenarioInfo,
+} from './types/simulation'
 
 function App() {
   const [view, setView] = useState<View>('dashboard')
@@ -32,6 +47,23 @@ function App() {
   const [damsError, setDamsError] = useState<string | null>(null)
   const [backendUp, setBackendUp] = useState(true)
   const [jobsLoaded, setJobsLoaded] = useState(false)
+  const [jobsError, setJobsError] = useState<string | null>(null)
+
+  // Backend connectivity is owned by a single latest-wins tracker so an older
+  // request can never override a newer one. It lives in a ref (stable across
+  // renders) and is created lazily on first use.
+  const healthRef = useRef<BackendHealthTracker | null>(null)
+  const getHealth = useCallback((): BackendHealthTracker => {
+    const existing = healthRef.current
+    if (existing !== null) return existing
+    const created = new BackendHealthTracker()
+    healthRef.current = created
+    return created
+  }, [])
+
+  // De-duplicate in-flight refreshes: a poll tick, a manual refresh and the
+  // StrictMode double-invoke must not pile up concurrent requests.
+  const jobsInFlight = useRef<Promise<JobsListResponse | null> | null>(null)
 
   // navigation targets
   const [runJobId, setRunJobId] = useState<string | null>(null)
@@ -40,24 +72,58 @@ function App() {
   const [preferredScenario, setPreferredScenario] = useState<string | null>(null)
 
   // ---- data loading ---------------------------------------------------------
-  const refreshJobs = useCallback(async () => {
+
+  // Dedicated health probe (`/system/status`). Used to disambiguate a data
+  // request that failed without a server response; it never changes the state
+  // by itself — the tracker folds its result in.
+  const probeBackendHealth = useCallback(async (): Promise<Reachability> => {
     try {
-      const res = await fetchJobs()
-      setJobs(res.jobs)
-      setActiveJobId(res.active_job_id)
-      setBackendUp(true)
-      setJobsLoaded(true)
-      return res
-    } catch {
-      setBackendUp(false)
-      return null
+      await fetchSystemStatus()
+      return 'reachable'
+    } catch (err) {
+      return classifyRequestFailure(err)
     }
   }, [])
 
+  const refreshJobs = useCallback(async (): Promise<JobsListResponse | null> => {
+    // Reuse the request already in flight instead of starting a duplicate.
+    if (jobsInFlight.current) return jobsInFlight.current
+    const health = getHealth()
+    const seq = health.begin()
+    const run = (async () => {
+      try {
+        const res = await fetchJobs()
+        setJobs(res.jobs)
+        setActiveJobId(res.active_job_id)
+        setJobsError(null)
+        setJobsLoaded(true)
+        setBackendUp(health.settle(seq, 'reachable'))
+        return res
+      } catch (err) {
+        setJobsLoaded(true)
+        const outcome = classifyRequestFailure(err)
+        if (outcome !== 'canceled') {
+          setJobsError(
+            describeRequestFailure(err, 'Could not load simulation jobs'),
+          )
+        }
+        // A failing data endpoint does not by itself mark the backend offline:
+        // settleDataRequest confirms with the health endpoint first, and
+        // ignores the outcome entirely if this request is already stale.
+        setBackendUp(
+          await health.settleDataRequest(seq, outcome, probeBackendHealth),
+        )
+        return null
+      } finally {
+        jobsInFlight.current = null
+      }
+    })()
+    jobsInFlight.current = run
+    return run
+  }, [getHealth, probeBackendHealth])
+
   useEffect(() => {
-    // Kick the initial load off the effect body so state updates are not
-    // applied synchronously during the effect.
-    void Promise.resolve().then(refreshJobs)
+    void refreshJobs()
     void fetchScenarios()
       .then(setScenarios)
       .catch(() => setScenarios([]))
@@ -65,12 +131,7 @@ function App() {
     void fetchDams()
       .then(setDamsData)
       .catch((err: unknown) => {
-        const detail = (err as { message?: string }).message
-        setDamsError(
-          detail?.includes('Network')
-            ? 'Backend unreachable — start the API server (uvicorn app.main:app).'
-            : 'Dam inventory failed to load.',
-        )
+        setDamsError(describeRequestFailure(err, 'Dam inventory failed to load'))
       })
       .finally(() => setDamsLoading(false))
   }, [refreshJobs])
@@ -79,11 +140,23 @@ function App() {
     (j) => j.status === 'running' || j.status === 'queued',
   )
 
-  // Poll faster while a simulation is live, gently otherwise.
+  // Poll faster while a simulation is live, gently otherwise. The next tick is
+  // scheduled only once the current one settles, so ticks can never pile up;
+  // the in-flight de-dupe in refreshJobs handles manual refreshes too.
   useEffect(() => {
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     const interval = anyRunning ? 2500 : 12000
-    const timer = setInterval(() => void refreshJobs(), interval)
-    return () => clearInterval(timer)
+    const tick = () => {
+      void refreshJobs().finally(() => {
+        if (!cancelled) timer = setTimeout(tick, interval)
+      })
+    }
+    timer = setTimeout(tick, interval)
+    return () => {
+      cancelled = true
+      if (timer !== undefined) clearTimeout(timer)
+    }
   }, [anyRunning, refreshJobs])
 
   // ---- handlers ---------------------------------------------------------------
@@ -215,6 +288,7 @@ function App() {
         return (
           <HistoryPage
             jobs={jobs}
+            error={jobsError}
             onRefresh={() => void refreshJobs()}
             onOpenRun={openRun}
             onViewResult={openResult}
