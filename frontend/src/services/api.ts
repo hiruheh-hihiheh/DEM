@@ -209,17 +209,23 @@ export const getSiteMeta = async (siteSlug: string) => {
 }
 
 export const generatePreview = async (siteSlug: string, payload: Record<string, unknown>) => {
-  const res = await api.post(`/sites/${siteSlug}/preview`, payload)
+  const res = await api.post(`/sites/${siteSlug}/preview`, payload, { timeout: 120000 })
   return res.data
 }
 
 export const prepareSite = async (siteSlug: string, payload: Record<string, unknown>) => {
-  const res = await api.post(`/sites/${siteSlug}/prepare`, payload)
+  const res = await api.post(`/sites/${siteSlug}/prepare`, payload, { timeout: 120000 })
   return res.data
 }
 
 export const runPipeline = async (siteSlug: string, dryRun = false) => {
-  const res = await api.post(`/sites/${siteSlug}/run-pipeline`, null, { params: { dry_run: dryRun } })
+  // The pipeline runs terrain processing and SPH case generation as
+  // subprocesses, which can take minutes on a real DEM. Give it a long
+  // timeout so a slow-but-successful run is not reported as a failure.
+  const res = await api.post(`/sites/${siteSlug}/run-pipeline`, null, {
+    params: { dry_run: dryRun },
+    timeout: 600000,
+  })
   return res.data
 }
 

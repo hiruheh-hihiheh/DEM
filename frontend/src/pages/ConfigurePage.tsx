@@ -34,22 +34,33 @@ const TYPE_LABELS: { id: ScenarioType; label: string }[] = [
   { id: 'extreme', label: 'Extreme' },
 ]
 
+/**
+ * Form values are held as strings so every field can be cleared or typed
+ * partially (e.g. "0." or "-") without being replaced underneath the cursor.
+ * They are parsed and range-checked on submit.
+ */
 interface FormState {
-  reservoirLevel: number
-  breachWidth: number
-  breachTime: number
-  simulationTime: number
-  particleSpacing: number
+  reservoirLevel: string
+  breachWidth: string
+  breachTime: string
+  simulationTime: string
+  particleSpacing: string
+}
+
+/** Parse a numeric field, returning NaN for empty / non-numeric text. */
+const toNumber = (value: string): number => {
+  const n = Number(value)
+  return Number.isFinite(n) ? n : NaN
 }
 
 const formFromScenario = (s: ScenarioInfo): FormState => {
   const p = s.parameters
   return {
-    reservoirLevel: 100,
-    breachWidth: p?.breach_width ?? 1,
-    breachTime: p?.breach_time ?? 2,
-    simulationTime: p?.simulation_time ?? 6,
-    particleSpacing: p?.particle_spacing ?? 0.1,
+    reservoirLevel: '100',
+    breachWidth: String(p?.breach_width ?? 1),
+    breachTime: String(p?.breach_time ?? 2),
+    simulationTime: String(p?.simulation_time ?? 6),
+    particleSpacing: String(p?.particle_spacing ?? 0.1),
   }
 }
 
@@ -107,14 +118,17 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
   const base = scenario?.parameters ?? null
   const timeOut = base?.time_out ?? 0.05
 
+  const matchesBase = (value: string, baseValue: number | undefined): boolean =>
+    baseValue != null && Math.abs(toNumber(value) - baseValue) < 1e-9
+
   const validated =
     scenario != null &&
     form != null &&
-    form.reservoirLevel === 100 &&
-    form.breachWidth === (base?.breach_width ?? form.breachWidth) &&
-    form.breachTime === (base?.breach_time ?? form.breachTime) &&
-    form.simulationTime === (base?.simulation_time ?? form.simulationTime) &&
-    form.particleSpacing === (base?.particle_spacing ?? form.particleSpacing)
+    matchesBase(form.reservoirLevel, 100) &&
+    matchesBase(form.breachWidth, base?.breach_width) &&
+    matchesBase(form.breachTime, base?.breach_time) &&
+    matchesBase(form.simulationTime, base?.simulation_time) &&
+    matchesBase(form.particleSpacing, base?.particle_spacing)
 
   const applyType = (type: ScenarioType) => {
     if (!scenario || !form) return
@@ -123,8 +137,8 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
     const mult = TYPE_MULTIPLIERS[type]
     setForm({
       ...form,
-      breachWidth: round3((base?.breach_width ?? 1) * mult),
-      reservoirLevel: type === 'extreme' ? 100 : form.reservoirLevel,
+      breachWidth: String(round3((base?.breach_width ?? 1) * mult)),
+      reservoirLevel: type === 'extreme' ? '100' : form.reservoirLevel,
     })
   }
 
@@ -134,17 +148,48 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
     setError(null)
     setRunningJob(null)
 
+    // Parse + range-check every field against the same bounds shown on the
+    // inputs, so an empty or out-of-range value is reported instead of being
+    // silently coerced (which is what made fields "jump back").
+    const values = {
+      reservoirLevel: toNumber(form.reservoirLevel),
+      breachWidth: toNumber(form.breachWidth),
+      breachTime: toNumber(form.breachTime),
+      simulationTime: toNumber(form.simulationTime),
+      particleSpacing: toNumber(form.particleSpacing),
+    }
+    const ranges: { key: keyof typeof values; label: string; min: number; max: number }[] = [
+      { key: 'reservoirLevel', label: 'Reservoir level', min: 1, max: 100 },
+      { key: 'breachWidth', label: 'Breach width', min: 0.05, max: 50 },
+      { key: 'breachTime', label: 'Breach time', min: 0, max: 60 },
+      { key: 'simulationTime', label: 'Simulation duration', min: 0.5, max: 600 },
+      { key: 'particleSpacing', label: 'Particle spacing', min: 0.02, max: 0.5 },
+    ]
+    for (const range of ranges) {
+      const value = values[range.key]
+      if (!Number.isFinite(value)) {
+        setError(`${range.label} must be a number.`)
+        setSubmitting(false)
+        return
+      }
+      if (value < range.min || value > range.max) {
+        setError(`${range.label} must be between ${range.min} and ${range.max}.`)
+        setSubmitting(false)
+        return
+      }
+    }
+
     const diff = (value: number, baseValue: number | undefined) =>
       baseValue != null && Math.abs(value - baseValue) < 1e-9 ? null : value
 
     const body: CreateJobRequest = {
       scenario: scenario.name,
       parameters: {
-        reservoir_level: form.reservoirLevel,
-        breach_width: diff(form.breachWidth, base?.breach_width),
-        breach_time: diff(form.breachTime, base?.breach_time),
-        simulation_time: diff(form.simulationTime, base?.simulation_time),
-        particle_spacing: diff(form.particleSpacing, base?.particle_spacing),
+        reservoir_level: values.reservoirLevel,
+        breach_width: diff(values.breachWidth, base?.breach_width),
+        breach_time: diff(values.breachTime, base?.breach_time),
+        simulation_time: diff(values.simulationTime, base?.simulation_time),
+        particle_spacing: diff(values.particleSpacing, base?.particle_spacing),
         scenario_type: scenarioType,
       },
     }
@@ -191,7 +236,9 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
   }
 
   const estimatedFrames =
-    form != null ? Math.floor(form.simulationTime / timeOut) + 1 : 0
+    form != null && Number.isFinite(toNumber(form.simulationTime))
+      ? Math.floor(toNumber(form.simulationTime) / timeOut) + 1
+      : 0
 
   return (
     <div className="page">
@@ -345,17 +392,15 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
                 <input
                   id="reservoir"
                   className="form-input"
-                  type="number"
-                  min={1}
-                  max={100}
-                  step={1}
+                  type="text"
+                  inputMode="numeric"
                   disabled={!custom || !form}
-                  value={form?.reservoirLevel ?? 100}
+                  value={form?.reservoirLevel ?? ''}
                   onChange={(e) =>
                     form &&
                     setForm({
                       ...form,
-                      reservoirLevel: clamp(Number(e.target.value), 1, 100),
+                      reservoirLevel: e.target.value,
                     })
                   }
                 />
@@ -372,15 +417,13 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
                 <input
                   id="breach-width"
                   className="form-input"
-                  type="number"
-                  min={0.05}
-                  max={50}
-                  step={0.1}
+                  type="text"
+                  inputMode="decimal"
                   disabled={!custom || !form}
                   value={form?.breachWidth ?? ''}
                   onChange={(e) =>
                     form &&
-                    setForm({ ...form, breachWidth: Number(e.target.value) })
+                    setForm({ ...form, breachWidth: e.target.value })
                   }
                 />
               </div>
@@ -392,15 +435,13 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
                 <input
                   id="breach-time"
                   className="form-input"
-                  type="number"
-                  min={0}
-                  max={60}
-                  step={0.05}
+                  type="text"
+                  inputMode="decimal"
                   disabled={!custom || !form}
                   value={form?.breachTime ?? ''}
                   onChange={(e) =>
                     form &&
-                    setForm({ ...form, breachTime: Number(e.target.value) })
+                    setForm({ ...form, breachTime: e.target.value })
                   }
                 />
               </div>
@@ -412,17 +453,15 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
                 <input
                   id="sim-time"
                   className="form-input"
-                  type="number"
-                  min={0.5}
-                  max={600}
-                  step={0.5}
+                  type="text"
+                  inputMode="decimal"
                   disabled={!custom || !form}
                   value={form?.simulationTime ?? ''}
                   onChange={(e) =>
                     form &&
                     setForm({
                       ...form,
-                      simulationTime: Number(e.target.value),
+                      simulationTime: e.target.value,
                     })
                   }
                 />
@@ -435,17 +474,15 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
                 <input
                   id="spacing"
                   className="form-input"
-                  type="number"
-                  min={0.02}
-                  max={0.5}
-                  step={0.01}
+                  type="text"
+                  inputMode="decimal"
                   disabled={!custom || !form}
                   value={form?.particleSpacing ?? ''}
                   onChange={(e) =>
                     form &&
                     setForm({
                       ...form,
-                      particleSpacing: Number(e.target.value),
+                      particleSpacing: e.target.value,
                     })
                   }
                 />
@@ -531,11 +568,6 @@ export const ConfigurePage: React.FC<ConfigurePageProps> = ({
       </div>
     </div>
   )
-}
-
-function clamp(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value)) return min
-  return Math.min(max, Math.max(min, value))
 }
 
 function round3(value: number): number {

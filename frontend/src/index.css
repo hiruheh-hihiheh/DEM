@@ -67,6 +67,35 @@
   --sidebar-w: 340px;
   --metrics-h: auto;
 
+  /* ---- Legacy token aliases -------------------------------------------
+     Older components (DamDigitalTwin.css, the digital-twin panel and map
+     popup styles in App.css) reference these names. Without them the
+     declarations are invalid and the elements fall back to transparent
+     backgrounds and inherited text — the "white on white" bug. Mapping the
+     legacy names onto the canonical tokens fixes every use at the source. */
+  --bg-primary:        var(--color-bg-base);
+  --bg-secondary:      var(--color-bg-surface);
+  --bg-tertiary:       var(--color-bg-elevated);
+  --bg-elevated:       var(--color-bg-elevated);
+  --border-subtle:     rgba(255, 255, 255, 0.10);
+  --border-focus:      var(--color-accent);
+  --text-primary:      var(--color-text-primary);
+  --text-secondary:    var(--color-text-secondary);
+  --text-muted:        var(--color-text-muted);
+  --accent-primary:    var(--color-accent);
+  --accent-primary-hover: #7dd3fc;
+  --accent-success:    var(--color-success);
+  --accent-warning:    var(--color-warning);
+  --accent-danger:     var(--color-danger);
+  --font-mono:         ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --space-md:          var(--space-4);
+  --space-lg:          var(--space-5);
+  --transition-fast:   var(--duration);
+
+  /* Native controls (checkboxes, file buttons, scrollbars) follow the dark
+     scheme instead of rendering light-on-light. */
+  color-scheme: dark;
+
   font-family: var(--font-family);
   font-size: 16px;
   color: var(--color-text-primary);
@@ -100,9 +129,121 @@ body {
   height: 100%;
 }
 
-button, input, select, textarea {
+/* ---- Form controls --------------------------------------------------------
+   Base styling for every control so none can render light-on-light. The
+   previous rule only set `color: inherit`, which left inputs with the browser's
+   default white background and the page's light text on top of it. These
+   declarations give every control an explicit, readable surface; classed
+   controls (.form-input, .form-select, .btn, .nav-tab, .link-btn …) are more
+   specific and continue to win. */
+button,
+input,
+select,
+textarea {
   font: inherit;
-  color: inherit;
+  color: var(--color-text-primary);
+}
+
+/* Text-entry controls and selects: dark field, visible border. */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='submit']):not([type='button']):not([type='reset']),
+select,
+textarea {
+  background-color: var(--color-bg-deep);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  transition: border-color var(--duration) var(--ease-out),
+              box-shadow var(--duration) var(--ease-out);
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='range']):focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-dim);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled,
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Checkboxes / radios / sliders keep their platform look but use the accent. */
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+input[type='range'] {
+  accent-color: var(--color-accent);
+}
+
+/* File inputs: readable browse button on the dark surface. */
+input[type='file'] {
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+input[type='file']::file-selector-button {
+  margin-right: 10px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+input[type='file']::file-selector-button:hover {
+  border-color: var(--color-border-accent);
+  background: var(--color-bg-glass-hover);
+}
+
+/* Some browsers paint the dropdown list with the OS theme — pin it. */
+select option {
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+}
+
+/* Base button: visibly a button, with real hover/focus/disabled states. */
+button {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background var(--duration) var(--ease-out),
+              border-color var(--duration) var(--ease-out),
+              color var(--duration) var(--ease-out);
+}
+button:hover:not(:disabled) {
+  background: var(--color-bg-glass-hover);
+  border-color: var(--color-border-accent);
+}
+button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* Autofill must not repaint fields white. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: var(--color-text-primary);
+  -webkit-box-shadow: 0 0 0 1000px var(--color-bg-deep) inset;
+  transition: background-color 5000s ease-in-out 0s;
 }
 
 /* ---- Scrollbar (Webkit) ---- */
