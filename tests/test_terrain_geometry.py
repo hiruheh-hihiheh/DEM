@@ -677,6 +677,45 @@ class GeneratorGeometryTests(unittest.TestCase):
         )
         self.assertEqual(summary_off["reservoir"]["fluid_segment_count"], 0)
 
+    def test_valid_synthetic_valley_passes_validation(self):
+        """A synthetic valley with rising abutments is a valid geometry and is
+        not mistaken for a flat (DSM water-plane) dam anchor."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            npz, stl = _make_synthetic_terrain(tmp_dir)
+            config_path = _write_config(tmp_dir, npz=npz, stl=stl, base=SYNTH_BASE)
+            summary = _run_generator(self.gen, config_path, tmp_dir / "case")
+
+        self.assertEqual(
+            summary["validation"]["status"], "pass", summary["validation"].get("errors")
+        )
+        diag = summary["terrain_diagnostic"]
+        self.assertFalse(diag["is_flat_water_plane"], diag)
+        self.assertLess(diag["flat_fraction"], 0.35)
+
+    def test_submerged_dam_endpoints_fail_with_flat_water_diagnostic(self):
+        """A broad flat plane (the signature of the water surface a DSM records
+        over a reservoir) leaves both dam endpoints below the water line:
+        validation fails, the failure names the flat surface and the missing
+        bathymetry, and no DualSPHysics run is attempted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            # wall_slope=0 flattens the whole surface so the anchor sits on a
+            # near-constant plane with no abutment above the water line.
+            npz, stl = _make_synthetic_terrain(tmp_dir, wall_slope=0.0)
+            config_path = _write_config(tmp_dir, npz=npz, stl=stl, base=SYNTH_BASE)
+            summary = _run_generator(self.gen, config_path, tmp_dir / "case")
+
+        validation = summary["validation"]
+        self.assertEqual(validation["status"], "fail")
+        joined = " ".join(validation["errors"])
+        self.assertIn("Dam low end terrain reaches water surface", joined)
+        self.assertIn("Dam high end terrain reaches water surface", joined)
+        self.assertIn("broad flat surface", joined)
+        self.assertIn("bare-earth DEM/DTM", joined)
+        self.assertTrue(summary["terrain_diagnostic"]["is_flat_water_plane"])
+        self.assertFalse(validation.get("dualsphysics_run_attempted", False))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

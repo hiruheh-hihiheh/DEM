@@ -253,9 +253,15 @@ def _do_case(ctx: RunContext) -> None:
     summary = module.generate_case(config_path=cfg_path)
     validation = summary.get("validation", {})
     if validation.get("status") != "pass":
+        errors = [str(err) for err in validation.get("errors", []) if str(err)]
+        if errors:
+            detail = "\n".join(f"  - {err}" for err in errors)
+        else:
+            detail = json.dumps(validation, default=str)[:600]
         raise RuntimeError(
-            "Generated case failed validation: "
-            + json.dumps(validation, default=str)[:600]
+            "Generated case failed physical validation "
+            f"({validation.get('checks_passed', 0)} checks passed, "
+            f"{len(errors)} failed):\n{detail}"
         )
     for key in ("definition", "runner", "summary"):
         produced = case_output_paths(scenario).get(key)

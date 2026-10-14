@@ -11,6 +11,14 @@ type PipelineResult = {
   stdout?: string
   stderr?: string
   error?: string
+  validation?: {
+    status?: string
+    checks_passed?: number
+    errors?: string[]
+  }
+  validation_errors?: string[]
+  limitations?: string[]
+  terrain_diagnostic?: Record<string, unknown>
 }
 
 const OUT_PANEL: React.CSSProperties = {
@@ -583,8 +591,31 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
                   {pipelineRes.stage ? ` · stage: ${pipelineRes.stage}` : ''}
                   {typeof pipelineRes.returncode === 'number' ? ` (exit code ${pipelineRes.returncode})` : ''}
                 </div>
-                {!pipelineRes.ok && pipelineRes.error && (
-                  <div style={MSG_ERR}>{pipelineRes.error}</div>
+                {!pipelineRes.ok && pipelineRes.error && (pipelineRes.validation_errors?.length ?? 0) === 0 && (
+                  <div style={{ ...MSG_ERR, whiteSpace: 'pre-wrap' }}>{pipelineRes.error}</div>
+                )}
+                {!pipelineRes.ok && (pipelineRes.validation_errors?.length ?? 0) > 0 && (
+                  <div style={MSG_ERR}>
+                    <strong>Physical validation failed</strong>
+                    {typeof pipelineRes.validation?.checks_passed === 'number' && (
+                      <> — {pipelineRes.validation.checks_passed} checks passed, {(pipelineRes.validation_errors ?? []).length} failed:</>
+                    )}
+                    <ul style={{ margin: '8px 0 0 0', paddingLeft: 20 }}>
+                      {(pipelineRes.validation_errors ?? []).map((err, i) => (
+                        <li key={i} style={{ marginBottom: 4 }}>{err}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {!pipelineRes.ok && (pipelineRes.limitations?.length ?? 0) > 0 && (
+                  <details style={MSG_INFO}>
+                    <summary style={{ cursor: 'pointer' }}>Terrain limitations</summary>
+                    <ul style={{ margin: '8px 0 0 0', paddingLeft: 20, whiteSpace: 'pre-wrap' }}>
+                      {(pipelineRes.limitations ?? []).map((lim, i) => (
+                        <li key={i} style={{ marginBottom: 4 }}>{lim}</li>
+                      ))}
+                    </ul>
+                  </details>
                 )}
                 <pre style={OUT_PANEL}>{pipelineRes.stdout || pipelineRes.stderr || JSON.stringify(pipelineRes, null, 2)}</pre>
                 <button type="button" disabled={loading || !pipelineRes.ok} onClick={() => void handleCreateJob()}>
@@ -592,7 +623,8 @@ export const OnboardPage: React.FC<{ onNavigate?: (v: View, jobId?: string) => v
                 </button>
                 {!pipelineRes.ok && (
                   <div style={{ ...MSG_INFO, marginTop: 12 }}>
-                    Fix the pipeline failure above before creating a simulation job.
+                    Physical validation failed, so no simulation job was created. Fix the terrain or the
+                    dam placement/anchor (see the errors above) and re-run the pipeline.
                   </div>
                 )}
               </div>

@@ -52,6 +52,20 @@ FIXED_WALL_MK = 1
 BREACH_GATE_MK = 200
 MOTION_EPS = 1e-6
 
+# Minimum fraction of the local terrain (within `dam_search_radius` of the dam)
+# that must sit within a small vertical band of the dam elevation before the
+# anchor is treated as a broad flat surface.  A Copernicus-style DEM is a
+# DIGITAL SURFACE MODEL: over a reservoir it records the top surface it images,
+# i.e. the flat WATER SURFACE, not the bed.  On such a surface the end-
+# containment rule cannot be satisfied and no bathymetry exists to fill the
+# reservoir, so the case must fail loudly with an explanation instead of a bare
+# "dam ends reach the water surface" message.  Calibration: the Chouldari valley
+# anchor scores ~0.18; the Bhakra reservoir anchor scores ~0.63.
+FLAT_SURFACE_FRACTION_THRESHOLD = 0.35
+# Vertical band (simulation units) used by the flatness test; at scale 0.02 this
+# is 2.5 m, comfortably below one dam-crest height and far below a reservoir.
+FLAT_SURFACE_TOLERANCE_MIN = 0.05
+
 
 class TerrainCaseError(Exception):
     """Base exception for terrain case generation errors."""
@@ -437,6 +451,56 @@ def _cell_stats(
         "max": float(np.max(values)),
         "median": float(np.median(values)),
     }
+
+
+def _flat_surface_diagnostic(
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
+    center_x: float,
+    center_y: float,
+    radius: float,
+    z_ref: float | None,
+    tolerance: float,
+) -> dict:
+    """Describe how flat the terrain around an anchor is.
+
+    Returns the fraction of local terrain samples within ``tolerance`` of
+    ``z_ref`` (the dam elevation), plus the local relief.  A high fraction means
+    the anchor sits on a broad, near-constant-elevation plane -- on a DSM that
+    is a water surface (reservoir), so there is no local relief to anchor a dam
+    abutment against.
+    """
+    info: dict = {
+        "sample_count": 0,
+        "flat_fraction": 0.0,
+        "relief": None,
+        "plane_z": None if z_ref is None else float(z_ref),
+        "tolerance": float(tolerance),
+        "search_radius": float(radius),
+        "is_flat_water_plane": False,
+    }
+    if z_ref is None:
+        return info
+
+    dist = np.hypot(x - center_x, y - center_y)
+    local = dist <= radius
+    zs = z[local]
+    zs = zs[np.isfinite(zs)]
+    if zs.size == 0:
+        return info
+
+    relief = float(np.max(zs) - np.min(zs))
+    flat_fraction = float(np.mean(np.abs(zs - z_ref) <= tolerance))
+    info.update(
+        {
+            "sample_count": int(zs.size),
+            "flat_fraction": flat_fraction,
+            "relief": relief,
+            "is_flat_water_plane": flat_fraction >= FLAT_SURFACE_FRACTION_THRESHOLD,
+        }
+    )
+    return info
 
 
 def _estimate_dam_span(
@@ -1346,6 +1410,7 @@ def _validate_geometry(
     standalone_xml: Path,
     runner_xml: Path,
     simulation_time: float,
+    terrain_diagnostic: dict | None = None,
 ) -> dict:
     errors: list[str] = []
     checks = 0
@@ -1501,18 +1566,54 @@ def _validate_geometry(
                 )
             return stats["min"] if stats is not None else None
 
+        containment_failed = False
         for label, lo, hi in (
             ("low end", geom.span_start - band, geom.span_start),
             ("high end", geom.span_end, geom.span_end + band),
         ):
             zmin = _end_band_min(lo, hi)
             if zmin is not None:
+                ok = zmin >= reservoir.water_surface_z - 1e-3
+                if not ok:
+                    containment_failed = True
                 check(
-                    zmin >= reservoir.water_surface_z - 1e-3,
+                    ok,
                     f"Dam {label} terrain reaches water surface "
                     f"(terrain={zmin:.4f} < "
                     f"surface={reservoir.water_surface_z:.4f})",
                 )
+
+        # If the ends cannot reach the water line, say WHY.  A broad flat surface
+        # at the dam anchor is the signature of a DSM water plane: there is no
+        # bathymetry or abutment to anchor against, so no span/orientation within
+        # the search radius can satisfy containment.  Report the missing data
+        # explicitly (this is additional to, never a replacement for, the checks
+        # above).
+        diag = terrain_diagnostic or {}
+        if (
+            containment_failed
+            and diag.get("is_flat_water_plane")
+            and diag.get("plane_z") is not None
+            and reservoir.water_surface_z is not None
+            and reservoir.water_surface_z > float(diag["plane_z"]) + 1e-6
+        ):
+            flat_pct = 100.0 * float(diag.get("flat_fraction", 0.0))
+            relief = diag.get("relief")
+            relief_txt = f"{relief:.3f}" if isinstance(relief, (int, float)) else "n/a"
+            check(
+                False,
+                "Dam anchor sits on a broad flat surface: "
+                f"{flat_pct:.0f}% of the terrain within "
+                f"{float(diag.get('search_radius', 0.0)):.1f} simulation units of "
+                f"the dam lies within {float(diag.get('tolerance', 0.0)):.3f} of the "
+                f"dam elevation {float(diag['plane_z']):.4f} (local relief "
+                f"{relief_txt}). A Copernicus GLO-30 DSM records the surface it "
+                "images, which over a reservoir is the WATER SURFACE, not the bed; "
+                "there is no bathymetry to anchor the dam ends or to fill the "
+                "reservoir. Supply a bare-earth DEM/DTM (or reservoir bathymetry "
+                "plus an observed water level) for a physically defensible case. "
+                "Do NOT run or report a DualSPHysics result for this terrain.",
+            )
 
     # --- Breach apron ---
     if geom.apron_box is not None:
@@ -1916,6 +2017,23 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
         corridor_floor + reservoir_water_depth,
         dam_crest_z - reservoir_freeboard,
     )
+
+    # Terrain-suitability diagnostic: is the dam anchored on a broad flat
+    # surface (a DSM water plane with no bathymetry)?  Passed to validation so a
+    # containment failure can be explained, and written to the summary so the UI
+    # can report the missing elevation data.
+    terrain_diagnostic = _flat_surface_diagnostic(
+        x,
+        y,
+        z,
+        dam_x,
+        dam_y,
+        dam_search_radius,
+        dam_center_z,
+        max(FLAT_SURFACE_TOLERANCE_MIN, 0.5 * particle_spacing),
+    )
+    terrain_diagnostic["water_surface_z"] = target_water_surface_z
+    terrain_diagnostic["dam_crest_z"] = dam_crest_z
 
     span_rel_min, span_rel_max = _estimate_dam_span(
         x, y, z, dam_x, dam_y, flow_axis, cfg, particle_spacing,
@@ -2388,6 +2506,7 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
         standalone_xml=definition_path,
         runner_xml=runner_definition_path,
         simulation_time=simulation_time,
+        terrain_diagnostic=terrain_diagnostic,
     )
 
     domain_errors = []
@@ -2433,6 +2552,20 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
             "bare-earth DEM/DTM or reservoir bathymetry is required for a "
             "valid geometry. Do NOT run or report a flood result for this "
             "case until that data is supplied."
+        )
+    if terrain_diagnostic.get("is_flat_water_plane"):
+        relief = terrain_diagnostic.get("relief")
+        relief_txt = f"{relief:.3f}" if isinstance(relief, (int, float)) else "n/a"
+        limitations.append(
+            "The dam anchor lies on a broad flat surface: "
+            f"{100.0 * float(terrain_diagnostic.get('flat_fraction', 0.0)):.0f}% of "
+            f"the terrain within "
+            f"{float(terrain_diagnostic.get('search_radius', 0.0)):.1f} simulation "
+            f"units of the dam is within "
+            f"{float(terrain_diagnostic.get('tolerance', 0.0)):.3f} of the dam "
+            f"elevation {float(terrain_diagnostic['plane_z']):.4f} (local relief "
+            f"{relief_txt}). This is a DSM water plane, not a valley floor, so no "
+            "dam abutment or reservoir bed is represented."
         )
 
     summary = {
@@ -2532,6 +2665,7 @@ def generate_case(config_path: Path = DEFAULT_CONFIG_PATH) -> dict:
             "standalone": domain_validation_standalone,
             "runner": domain_validation_runner,
         },
+        "terrain_diagnostic": terrain_diagnostic,
         "validation": validation,
         "outputs": {
             "definition_xml": str(definition_path),

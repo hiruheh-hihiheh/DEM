@@ -477,6 +477,65 @@ def _missing(paths: list[Path]) -> list[str]:
     return [str(p) for p in paths if not p.exists()]
 
 
+def _case_summary(site_slug: str) -> dict | None:
+    """Load the generated case summary for a scenario, if it exists.
+
+    The generator writes this even when validation fails, so it carries the
+    specific failed checks (and any terrain limitation) behind an opaque
+    non-zero pipeline exit.
+    """
+    try:
+        from scenario_runner.config import load_scenario
+        from scenario_runner.steps import case_output_paths
+
+        scenario = load_scenario(site_slug)
+        summary_path = case_output_paths(scenario)["summary"]
+    except Exception:
+        return None
+    if not summary_path.exists():
+        return None
+    try:
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _attach_case_validation(result: dict, site_slug: str) -> dict:
+    """Fold physical-validation detail from the case summary into a run result.
+
+    A bare "SPH generation failed" hides why the case was rejected.  Surface the
+    failed checks, the limitations and the terrain diagnostic so the frontend
+    can explain the physics and the missing data.
+    """
+    summary = _case_summary(site_slug)
+    if not summary:
+        return result
+
+    validation = summary.get("validation")
+    if isinstance(validation, dict):
+        result["validation"] = validation
+        errors = [str(e) for e in validation.get("errors", []) if str(e)]
+        result["validation_errors"] = errors
+    limitations = [str(x) for x in summary.get("limitations", []) if str(x)]
+    if limitations:
+        result["limitations"] = limitations
+    diagnostic = summary.get("terrain_diagnostic")
+    if isinstance(diagnostic, dict):
+        result["terrain_diagnostic"] = diagnostic
+
+    errors = result.get("validation_errors") or []
+    if errors:
+        checks = None
+        if isinstance(validation, dict):
+            checks = validation.get("checks_passed")
+        header = "Case geometry failed physical validation"
+        if isinstance(checks, int):
+            header += f" ({checks} checks passed, {len(errors)} failed)"
+        result["error"] = header + ":\n" + "\n".join(f"- {e}" for e in errors)
+    return result
+
+
 @router.post("/{site_slug}/run-pipeline")
 def run_pipeline(site_slug: str, dry_run: bool = False):
     ensure_scripts_on_path()
@@ -521,14 +580,18 @@ def run_pipeline(site_slug: str, dry_run: bool = False):
         rc2, out2 = run_step("sph")
         combined = (out + "\n" + out2) if out2 else out
         if rc2 != 0:
-            return {"ok": False, "stage": "sph", "returncode": rc2,
-                    "stdout": combined[-16000:] if combined else "", "stderr": "",
-                    "error": f"SPH generation failed (exit code {rc2})"}
+            return _attach_case_validation({
+                "ok": False, "stage": "sph", "returncode": rc2,
+                "stdout": combined[-16000:] if combined else "", "stderr": "",
+                "error": f"SPH generation failed (exit code {rc2})",
+            }, site_slug)
         missing2 = _missing(expected["sph"])
         if missing2:
-            return {"ok": False, "stage": "sph", "returncode": rc2,
-                    "stdout": combined[-16000:] if combined else "", "stderr": "",
-                    "error": "SPH finished but required case outputs are missing: " + ", ".join(missing2)}
+            return _attach_case_validation({
+                "ok": False, "stage": "sph", "returncode": rc2,
+                "stdout": combined[-16000:] if combined else "", "stderr": "",
+                "error": "SPH finished but required case outputs are missing: " + ", ".join(missing2),
+            }, site_slug)
         return {"ok": True, "stage": "complete", "returncode": 0,
                 "stdout": combined[-16000:] if combined else "", "stderr": ""}
     except HTTPException:
